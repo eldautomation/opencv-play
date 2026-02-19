@@ -133,10 +133,71 @@ def detect_crosshair_centerline_hough(img, debug_out=None):
 
     return cx, cy, theta_deg, overlay
 
+def red_only(img):
 
-img = cv2.imread("test.jpg")
-cy,cy,theta_deg,overlay = detect_crosshair_centerline_hough(img, debug_out="debug_1.png")
+    img_float = img.astype(np.float32)
 
-img = cv2.imread("test_square.jpg")
-cy,cy,theta_deg,overlay = detect_crosshair_centerline_hough(img, debug_out="debug_2.png")
+    blue = img_float[:, :, 0]
+    red  = img_float[:, :, 2]
+
+    # Average of red and blue
+    avg_rb = (red + blue) / 2.0
+
+    # Subtract average from red
+    new_red = red - avg_rb
+
+    # Floor negative values to 0
+    new_red = np.maximum(new_red, 0)
+
+    # Clip to valid 8-bit range
+    new_red = np.clip(new_red, 0, 255).astype(np.uint8)
+
+    # Create output image
+    output = img.copy()
+    output[:, :, 0] = 0
+    output[:, :, 1] = 0    
+    output[:, :, 2] = new_red
+
+    return output
+
+
+images = ["red-blob-1.jpg","red-blob-2.jpg","red-blob-3.jpg"]
+i=0
+for n in images: 
+    i+=1
+
+    img = cv2.imread(n)
+
+    out1 = img.copy()
+    # out1[:,:,0]=0
+    out1[:,:,1]=0
+    out1[:,:,2]=0
+    cv2.imwrite(f"blue-{i}.jpg",out1)
+
+    out2 = img.copy()
+    out2[:,:,0]=0
+    # out2[:,:,1]=1
+    out2[:,:,2]=0
+    cv2.imwrite(f"green-{i}.jpg", out2)
+
+    out3 = img.copy()
+    out3[:,:,0]=0
+    out3[:,:,1]=0
+    # out3[:,:,2]=1
+    cv2.imwrite(f"red-{i}.jpg",out3)
+
+
+
+    img = red_only(img)
+    cv2.imwrite(f"red_only_{i}.png",img)
+
+    debug_name = f"debug_{i}-1.png"
+    print(f"debug name is: {debug_name}")
+
+    # cy,cy,theta_deg,overlay = detect_crosshair_centerline_hough(img, debug_out=debug_name)
+
+
+    # img = cv2.imread("test_square.jpg")
+    # debug_name = f"debug_{i}-1-square.png"
+    # cy,cy,theta_deg,overlay = detect_crosshair_centerline_hough(img, debug_out=debug_name)
 
