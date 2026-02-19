@@ -174,8 +174,8 @@ def red_only(img):
 
 
 images = []
-#images.append(["red-blob-1.jpg","red-blob-2.jpg","red-blob-3.jpg"])
-images.extend(["red-blob-4.jpg","red-blob-5.jpg"])
+#images.append(["blob-1.jpg",blob-2.jpg","blob-3.jpg"])
+images.extend(["blob-4.jpg","blob-5.jpg"])
 
 i=0
 for n in images: 
@@ -200,8 +200,6 @@ for n in images:
     out3[:,:,1]=0
     # out3[:,:,2]=1
     cv2.imwrite(f"red-{i}.jpg",out3)
-
-
 
     img_r = red_only(img.copy())
     cv2.imwrite(f"red_only_{i}.png",img_r)
