@@ -131,6 +131,16 @@ def detect_crosshair_centerline_hough(img, debug_out=None):
     if debug_out:
         cv2.imwrite(debug_out, overlay)
 
+    print(f"type cy = {type(cy)}")
+    print(f"type cx = {type(cx)}")
+    print(f"type theta = {type(theta_deg)}")
+    print(f"type overlay = {type(overlay)}")
+
+    print(f"cy is:{cy}")
+    print(f"cx is:{cx}")
+    print(f"theta_deg is:{theta_deg}")
+    print(f"overlay is:{overlay}")
+
     return cx, cy, theta_deg, overlay
 
 def red_only(img):
@@ -161,7 +171,12 @@ def red_only(img):
     return output
 
 
-images = ["red-blob-1.jpg","red-blob-2.jpg","red-blob-3.jpg"]
+
+
+images = []
+#images.append(["red-blob-1.jpg","red-blob-2.jpg","red-blob-3.jpg"])
+images.extend(["red-blob-4.jpg","red-blob-5.jpg"])
+
 i=0
 for n in images: 
     i+=1
@@ -188,13 +203,13 @@ for n in images:
 
 
 
-    img = red_only(img)
-    cv2.imwrite(f"red_only_{i}.png",img)
+    img_r = red_only(img.copy())
+    cv2.imwrite(f"red_only_{i}.png",img_r)
 
     debug_name = f"debug_{i}-1.png"
     print(f"debug name is: {debug_name}")
-
-    # cy,cy,theta_deg,overlay = detect_crosshair_centerline_hough(img, debug_out=debug_name)
+    detect_crosshair_centerline_hough(img,debug_name)
+    cy,cy,theta_deg,overlay = detect_crosshair_centerline_hough(img)
 
 
     # img = cv2.imread("test_square.jpg")
