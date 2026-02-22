@@ -615,7 +615,7 @@ def row_average_profile(img):
     profile = gray.astype(np.float64).mean(axis=1)
     return profile
 
-def profile_to_grayscale_and_plot(profile, title="Row average profile"):
+def profile_to_greyscale_and_plot(profile, title="Row average profile"):
     """
     Function 3:
     Convert the tall list (profile) to a grayscale image representation and plot it.
@@ -658,11 +658,11 @@ def profile_to_grayscale_and_plot(profile, title="Row average profile"):
     ax1.grid(True)
 
     plt.tight_layout()
-    plt.show()
+    # plt.show()
 
     return gray_strip
 
-def plot_gray_strip_profile(gray_strip,
+def plot_grey_strip_profile(gray_strip,
                             title="Gray Strip Profile",
                             save_path="profile.jpg",
                             dpi=300):
@@ -700,7 +700,173 @@ def plot_gray_strip_profile(gray_strip,
     plt.tight_layout()
 
     plt.savefig(save_path, dpi=dpi, format="jpg")
-    plt.show()
+    # plt.show()
+
+
+def pad_grey_strip_symmetric(gray_strip: np.ndarray, N: int) -> np.ndarray:
+    """
+    Function 4:
+    Pad a gray strip symmetrically (top and bottom) with black pixels (value = 0).
+
+    Parameters
+    ----------
+    gray_strip : np.ndarray (H, W)
+        2D grayscale array.
+    N : int
+        Number of black pixels to add to BOTH top and bottom.
+
+    Returns
+    -------
+    padded : np.ndarray
+        Padded array with shape (H + 2N, W), same dtype as input.
+    """
+
+    if gray_strip is None:
+        raise ValueError("gray_strip is None")
+    if gray_strip.ndim != 2:
+        raise ValueError("gray_strip must be a 2D array")
+    if N < 0:
+        raise ValueError("N must be >= 0")
+
+    padded = np.pad(
+        gray_strip,
+        pad_width=((N, N), (0, 0)),  # (top,bottom), (left,right)
+        mode='constant',
+        constant_values=0
+    )
+
+    return padded
+
+def flip_gray_strip(gray_strip: np.ndarray) -> np.ndarray:
+    """
+    Function 1:
+    Flip the gray strip top-to-bottom.
+
+    Input
+    -----
+    gray_strip : np.ndarray (H, W), uint8 or float
+
+    Output
+    ------
+    gray_flipped : np.ndarray (H, W), same dtype as input
+    """
+    if gray_strip is None:
+        raise ValueError("gray_strip is None")
+    if gray_strip.ndim != 2:
+        raise ValueError("gray_strip must be a 2D array (H, W)")
+
+    return np.flipud(gray_strip)
+
+def strip_squared_difference_sum(grey_strip: np.ndarray,flipped_strip: np.ndarray) -> float:
+    """
+    Function 2:
+    Compute sum over all pixels of (gray_strip - flipped_strip(gray_strip))^2.
+
+    Output is a scalar (float).
+    """
+    if grey_strip is None:
+        raise ValueError("gray_strip is None")
+    if grey_strip.ndim != 2:
+        raise ValueError("gray_strip must be a 2D array (H, W)")
+
+    if flipped_strip is None:
+        raise ValueError("flipped_strip is None")
+    if flipped_strip.ndim != 2:
+        raise ValueError("flipped_strip must be a 2D array (H, W)")
+
+    if grey_strip.shape != flipped_strip.shape:
+        raise ValueError(
+            f"Input arrays must have the same shape. "
+            f"Got {grey_strip.shape} and {flipped_strip.shape}."
+        )
+
+    g = grey_strip.astype(np.float64)
+    gf = flipped_strip.astype(np.float64)
+
+    # print(g)
+    # print(gf)
+
+    diff = g - gf
+    sse = float(np.sum(diff * diff))
+    return sse
+
+def difference_rss(strip:np.array,n:int):
+    """
+   The function takes a 1-dimensional aray in, and compares it to itself, trying to find the central point. 
+    input: 1-D strip, 
+    """
+    strip_flipped = np.flipud(strip)
+
+    sums = []
+    for i in range(n*2):
+        j = 2*n-i
+        print(f"i is: {i}")
+        print(f"j is: {j}")
+        strip_pad = np.pad(
+            strip,
+            pad_width = ((i,j),(0,0)), # (top,bottom,),(eft,right)
+            constant_values = 0
+        )
+    
+        flipped_pad = np.pad(
+            strip_flipped,
+            pad_width = ((j,i),(0,0)), # (top,bottom,),(eft,right)
+            constant_values = 0
+        )
+        s = (i,strip_squared_difference_sum(strip_pad,flipped_pad))
+        print(f"position,sum is: {s}")
+        sums.append(s)
+    
+    sums_array = np.array(sums,dtype=np.float64)
+    return sums_array
+
+def plot_xy_positions(positions: np.ndarray,
+                      x_label: str = "Index",
+                      y_label: str = "Value",
+                      title: str = "Position Plot",
+                      save_path: str = "example.jpg",
+                      dpi: int = 300):
+    """
+    Plot an array of (X, Y) positions and save as a JPG.
+
+    Parameters
+    ----------
+    positions : np.ndarray (N, 2)
+        Array of floating-point (X, Y) values.
+    x_label : str
+        Label for the X axis.
+    y_label : str
+        Label for the Y axis.
+    title : str
+        Title of the graph.
+    save_path : str
+        Output filename.
+    dpi : int
+        Resolution of saved image.
+    """
+
+    if positions is None:
+        raise ValueError("positions is None")
+
+    positions = np.asarray(positions, dtype=np.float64)
+
+    if positions.ndim != 2 or positions.shape[1] != 2:
+        raise ValueError("positions must be an array of shape (N, 2)")
+
+    x = positions[:, 0]
+    y = positions[:, 1]
+
+    plt.figure(figsize=(6, 4))
+    plt.plot(x, y, marker='o')
+    plt.xlabel(x_label)
+    plt.ylabel(y_label)
+    plt.title(title)
+    plt.grid(True)
+    plt.tight_layout()
+
+    plt.savefig(save_path, dpi=dpi, format="jpg")
+    plt.close()
+
 
 
 subprocess.run(["bash","./cleanup.sh"]) # Clean up the folder. 
@@ -709,7 +875,8 @@ images = []
 #images.append(["blob-1.jpg",blob-2.jpg","blob-3.jpg"])
 #images.extend(["blob-4.jpg","blob-5.jpg","blob-6.jpg","blob-7.jpg","blob-8.jpg","blob-9.jpg","blob-10.jpg","blob-11.jpg","blob-12.jpg"])
 
-images.extend(["blob-5.jpg","blob-6.jpg","blob-11.jpg","blob-12.jpg"])
+# images.extend(["blob-5.jpg","blob-6.jpg","blob-11.jpg","blob-12.jpg"])
+images.extend(["blob-5.jpg"])
 
 # cx_list=[0.4,0.6,0.25,0.6]
 # cy_list=[0.35,0.7,0.35,0.4]
@@ -763,11 +930,11 @@ for n in images:
     overlay = draw_crosshair_at_point(overlay, (cx+10,cy+10), length=10)
     cv2.imwrite(f"debug-{i}-12.png", overlay)
 
-    try: 
-        skel = skeletonize(img)
-        cv2.imwrite(f"debug-{i}-50.png", skel)
-    except: 
-        print(f"Skeletonization failed on image: {i}")
+    # try: 
+    #     skel = skeletonize(img)
+    #     cv2.imwrite(f"debug-{i}-50.png", skel)
+    # except: 
+    #     print(f"Skeletonization failed on image: {i}")
 
 
 
@@ -797,11 +964,11 @@ for n in images:
     except: 
         print(f"crosshair detection faield on subimage {i}")
 
-    try: 
-        skel = skeletonize(subimg)
-        cv2.imwrite(f"debug-{i}-40.png", skel)
-    except: 
-        print(f"Skeletonization failed on sub image: {i}")
+    # try: 
+    #     skel = skeletonize(subimg)
+    #     cv2.imwrite(f"debug-{i}-40.png", skel)
+    # except: 
+    #     print(f"Skeletonization failed on sub image: {i}")
 
     # Begin finding sub-areas
     img1 = img.copy()
@@ -827,8 +994,21 @@ for n in images:
     cropped, ((x_min, y_min), (x_max, y_max)) = crop_to_box(img, box)
 
     profile = row_average_profile(cropped)
-    grey_strip = profile_to_grayscale_and_plot(profile, title="Row average profile")
+    grey_strip = profile_to_greyscale_and_plot(profile, title="Row average profile")
     cv2.imwrite(f"debug-{i}-70.png",grey_strip)
     
-    plot_gray_strip_profile(grey_strip,title="Gray Strip Profile",save_path=f"debug-{i}-75.jpg",dpi=300)
+    plot_grey_strip_profile(grey_strip,title="Gray Strip Profile",save_path=f"debug-{i}-75.jpg",dpi=300)
 
+    padded_grey = pad_grey_strip_symmetric(grey_strip, N=50)
+    cv2.imwrite(f"debug-{i}-71.png",padded_grey)
+
+    print(f"padded grey is: \n{padded_grey}")
+
+    flipped_strip = flip_gray_strip(padded_grey)
+    print(f"flipped_strip is: \n{flipped_strip}")
+
+    score = strip_squared_difference_sum(padded_grey,flipped_strip)
+    print(f"rss score is: {score}")
+
+    rss_vals = difference_rss(grey_strip,50)
+    plot_xy_positions(rss_vals,save_path = f"debug-{i}-76.jpg")
