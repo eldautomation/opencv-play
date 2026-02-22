@@ -4,7 +4,28 @@ import math
 import subprocess
 import matplotlib.pyplot as plt
 import warnings
+import os
+import shutil
 
+def clear_folder(folder_path: str):
+    """
+    Delete all files and subdirectories inside folder_path.
+    The folder itself is preserved.
+    """
+
+    if not os.path.exists(folder_path):
+        raise ValueError(f"Folder does not exist: {folder_path}")
+
+    if not os.path.isdir(folder_path):
+        raise ValueError(f"Path is not a folder: {folder_path}")
+
+    for entry in os.listdir(folder_path):
+        full_path = os.path.join(folder_path, entry)
+
+        if os.path.isfile(full_path) or os.path.islink(full_path):
+            os.unlink(full_path)  # delete file
+        elif os.path.isdir(full_path):
+            shutil.rmtree(full_path)  # delete folder recursively
 
 def pct_list_to_int_list(pct_list,scale):
     """
@@ -31,15 +52,106 @@ def pct_list_to_int_list(pct_list,scale):
     
     return int_list
 
+def draw_box_on_image(
+    image: np.ndarray,
+    corner1: tuple[int, int],
+    corner2: tuple[int, int],
+    width: int,
+    color: tuple[int, int, int] = (0, 255, 255)  # yellow in BGR
+) -> np.ndarray:
+    """
+    Draw a rectangle on an image. If the input is grayscale, convert to BGR first.
+
+    Parameters
+    ----------
+    image : np.ndarray
+        Input image, grayscale (H,W) or color (H,W,3).
+    corner1 : (int, int)
+        (x, y) corner.
+    corner2 : (int, int)
+        (x, y) opposite corner.
+    width : int
+        Rectangle line thickness in pixels.
+    color : (int, int, int)
+        BGR color tuple. Default is yellow (0,255,255).
+
+    Returns
+    -------
+    out : np.ndarray
+        Color (BGR) image with rectangle drawn.
+    """
+    if image is None:
+        raise ValueError("image is None")
+    if width <= 0:
+        raise ValueError("width must be > 0")
+
+    # Convert to BGR if grayscale
+    if image.ndim == 2:
+        gray_u8 = image.astype(np.uint8)
+        out = cv2.cvtColor(gray_u8, cv2.COLOR_GRAY2BGR)
+    elif image.ndim == 3 and image.shape[2] == 3:
+        # If color image is float64, convert to uint8 similarly (optional but safer)
+        if image.dtype == np.uint8:
+            out = image.copy()
+        else:
+            # normalize each channel to uint8 conservatively
+            out = np.dstack([_to_uint8_gray(image[:, :, c]) for c in range(3)])
+    else:
+        raise ValueError("image must be grayscale (H,W) or BGR color (H,W,3)")
+
+    if image.ndim == 2:
+        if image.dtype != np.uint8:
+            gray_u8 = np.clip(image, 0, 255).astype(np.uint8)
+        else:
+            gray_u8 = image
+        out = cv2.cvtColor(gray_u8, cv2.COLOR_GRAY2BGR)
+
+
+    H, W = out.shape[:2]
+    x1, y1 = int(corner1[0]), int(corner1[1])
+    x2, y2 = int(corner2[0]), int(corner2[1])
+
+    # Correct ordering
+    x_min, x_max = sorted((x1, x2))
+    y_min, y_max = sorted((y1, y2))
+
+    # Clip to bounds (OpenCV rectangle uses inclusive end coords)
+    x_min = max(0, min(W - 1, x_min))
+    x_max = max(0, min(W - 1, x_max))
+    y_min = max(0, min(H - 1, y_min))
+    y_max = max(0, min(H - 1, y_max))
+
+    if x_max <= x_min or y_max <= y_min:
+        raise ValueError("Rectangle corners produce an empty/degenerate box after clipping.")
+
+    cv2.rectangle(out, (x_min, y_min), (x_max, y_max), color, thickness=width)
+    return out
+
 def sdrm(values, search_size, debug, debug_prefix):
     """
 
-    Inputs: 
-    Array: 
+    --------
+    Inputs
+    --------
+    values: 
         A 1D array of floating point number. 
         This is the data who's center we want to find. 
     search_size: int 
         This is the size of the window we want to search. 
+    debug: bool 
+        This determines if the debug information is output 
+    debug_prefix: str 
+        A prefix used for saving images. 
+
+    --------        
+    Outputs: 
+    --------
+    peak_from_left: 
+        The position of the pixel, measured from the left of the area
+    peak_from_center: 
+        The position of the pixel, easured from the distance from the center pixel.
+
+
     """
     values = np.asarray(values, dtype=np.float64)
 
@@ -103,15 +215,17 @@ def sdrm(values, search_size, debug, debug_prefix):
         plot_xy_positions(sums3,x_label = "Pixel Value, corrected", y_label = "Rss Values", title = "Rss value", save_path = debug_prefix+"25.jpg",dpi = 300)
 
         print(f"search_size:\t{search_size}")
-        print(f"min point1:{min_point}")
-        print(f"min point2:{min_point2}")
+        # print(f"min point1:{min_point}")
+        # print(f"min point2:{min_point2}")
         print(f"min point3:{min_point3}")
 
         # print(f"sums:\n{sums}")
         # print(f"sums2:\n{sums2}")
 
+    peak_from_left  = min_point[0]
+    peak_from_center = min_point3[0]
 
-    return min_point3
+    return peak_from_left, peak_from_center
 
 
 def plot_xy_positions(positions: np.ndarray,
@@ -147,27 +261,27 @@ def plot_xy_positions(positions: np.ndarray,
     # if positions.ndim != 1 or positions.shape[1] != 1:
     #     raise ValueError("positions must be an array of shape (N, 1)")
 
-    print(f"shape\t{positions.shape}")
-    print(f"size\t{positions.size}")
-    print(f"num dims\t{positions.ndim}")
+    # print(f"shape\t{positions.shape}")
+    # print(f"size\t{positions.size}")
+    # print(f"num dims\t{positions.ndim}")
 
     if positions.ndim == 1:
         y = positions
         x = range(len(positions))
     elif positions.ndim == 2:
-        pass
         x = positions[:,0]
         y = positions[:,1]
 
-        a = positions[:,0]
-        b = positions[:,1]
+        # a = positions[:,0]
+        # b = positions[:,1]
 
-        print("positions")
-        print(positions)
+        # print("positions")
+        # print(positions)
 
-        print(f"a\t{a}")
-        print(f"b\t{b}")
-
+        # print(f"a\t{a}")
+        # print(f"b\t{b}")
+    else: 
+        raise ValueError("Array must have either 1 or two series of data")
 
     plt.figure(figsize=(6, 4))
     plt.plot(x, y, marker='o')
@@ -254,11 +368,18 @@ def find_center_pixel(
     # For a narrow strip (small H), this is typical.
     profile_full = image.mean(axis=0)  # shape (W,)
 
+    if debug:
+        pass
+        # print(f"cx:{cx}")
+        # print(f"search_size:{search_size}")
+        # print(f"W:{W}")
+        # print(f"H:{H}")
+
     # Define search window around cx
     x0 = int(np.floor(cx - search_size))
     x1 = int(np.ceil(cx + search_size)) + 1  # inclusive -> exclusive
-    x0 = max(0, min(W, x0))
-    x1 = max(0, min(W, x1))
+    # x0 = max(0, min(W, x0))
+    # x1 = max(0, min(W, x1))
 
     if x1 <= x0:
         raise ValueError("Search window is empty after clipping.")
@@ -300,41 +421,30 @@ def find_center_pixel(
         # raise NotImplementedError("symmetric diff rms minimum (sdrm) not implemented in skeleton.")
         warnings.warn("symmetric diff rms minimum (sdrm) not implemented yet")
         plot_xy_positions(profile_full,x_label = "Pixel Index", y_label = "Pixel Intensity", title = "Position Plot", save_path = debug_prefix+"21.jpg",dpi = 300)
-        mid_pos = sdrm(profile_full,search_size, debug = True, debug_prefix = debug_prefix)
-        pos_1d = "Fake"
+        peak_from_left,peak_from_center = sdrm(profile_full,search_size, debug = True, debug_prefix = debug_prefix)
+        pos_left = peak_from_left
+        pos_center = peak_from_center
+
         if debug: 
-            print(f"mis_pos is: {mid_pos}")
+            print(f"pos_left is: {pos_left}")
+            print(f"pos_center is: {pos_center}")
 
     else:
         raise ValueError(f"Unknown search_method: {search_method}")
 
 
-
-    # -------------------------
-    # 4) Map 1D position back to 2D position (placeholder)
-    # -------------------------
-    # For non-slanted distribution, y can be taken as cy (or strip center).
-    if not slant:
-        pos_2d = (pos_1d, cy)
-    else:
-        # Placeholder: if the peak is slanted across rows, you could:
-        #   - compute per-row peak centers, fit a line, then evaluate at desired y
-        #   - or rotate the strip to deskew before measuring
-        # For now, return same y.
-        pos_2d = (pos_1d, cy)
-
     # -------------------------
     # 5) Debug hooks
     # -------------------------
     if debug:
-        print("debug mode active - pixel centerline search")
+        pass
+        # print("debug mode active - pixel centerline search")
         # Keep this lightweight; do not print huge arrays in real use.
-        # print(f"[{debug_prefix}] strip size: (H={H}, W={W})")
+        # printf(f"[{debug_prefix}] strip size: (H={H}, W={W})")
         # print(f"[{debug_prefix}] search window: x0={x0}, x1={x1}, method={search_method}")
-        # print(f"[{debug_prefix}] pos_1d={pos_1d:.3f}, pos_2d=({pos_2d[0]:.3f},{pos_2d[1]:.3f})")
         # Optionally save a plot/overlay outside this skeleton.
 
-    return pos_1d, pos_2d
+    return pos_center, pos_left
 
 def find_cross_center(
     image: np.ndarray,
@@ -406,6 +516,7 @@ def find_cross_center(
         image = image.mean(axis=2).astype(np.float64)
     else:
         image = image.astype(np.float64)
+    overlay = image.copy()
 
     # -------------------------
     # 1) Crop around crop_center
@@ -415,6 +526,8 @@ def find_cross_center(
     y0 = max(0, cy_crop - crop_h // 2)
     x1 = min(W_img, x0 + crop_w)
     y1 = min(H_img, y0 + crop_h)
+
+    overlay = draw_box_on_image(overlay,corner1=(x0,y0),corner2=(x1,y1),width=3,color=(255,0,0))
 
     # Optionally re-adjust to preserve requested size if clipped
     if (x1 - x0) < crop_w:
@@ -430,34 +543,108 @@ def find_cross_center(
     # Default: center ROI within the crop
 
     center_t = (cx_crop,y0)
-    center_r = (x0,cx_crop)
+    center_r = (x0,cy_crop)
     center_b = (cx_crop,y1)
-    center_l = (x1,cx_crop)
+    center_l = (x1,cy_crop)
 
     roi_w = roi_size[0]
     roi_h = roi_size[1]
-    roi_x = 100
-    roi_y = 150
 
-    roi = crop # stand-in
+    roi_list = ["top","right","bottom","left"]
+    roi_loc = [center_t,center_r,center_b,center_l]
 
-    if debug: 
-        h, w = image.shape[:2]
-        print(f"Image Size:\theight:{h}\twidth:{w}")
-        h, w = crop.shape[:2]
-        print(f"Crop Size:\theight:{h}\twidth:{w}")
+    print(f"roi_w:{roi_w}")
+    print(f"roi_h:{roi_h}")
+    i = 0
+
+    for sub_roi in roi_list: 
+        debug_img = "0"
+        if sub_roi == "top":
+            x0 = int(roi_loc[i][0] - roi_w/2)
+            x1 = int(roi_loc[i][0] + roi_w/2)
+            y0 = int(roi_loc[i][1] - roi_h/2)
+            y1 = int(roi_loc[i][1] + roi_h/2)
+            roi_x = roi_loc[i][0]
+            roi_y = roi_loc[i][1]
+            debug_img = "1"
+            roi_img = image[y0:y1,x0:x1]
+
+        if sub_roi == "bottom":
+            x0 = int(roi_loc[i][0] - roi_w/2)
+            x1 = int(roi_loc[i][0] + roi_w/2)
+            y0 = int(roi_loc[i][1] - roi_h/2)
+            y1 = int(roi_loc[i][1] + roi_h/2)
+            roi_x = roi_loc[i][0]
+            roi_y = roi_loc[i][1]
+            debug_img = "3"
+            roi_img = image[y0:y1,x0:x1]
+
+        if sub_roi == "right":
+            x0 = int(roi_loc[i][0] - roi_h/2)
+            x1 = int(roi_loc[i][0] + roi_h/2)
+            y0 = int(roi_loc[i][1] - roi_w/2)
+            y1 = int(roi_loc[i][1] + roi_w/2)
+            roi_x = roi_loc[i][0]
+            roi_y = roi_loc[i][1]
+            debug_img = "2"
+            roi_img = image[y0:y1,x0:x1]
+            roi_img = roi_img.T
+
+        if sub_roi == "left":
+            x0 = int(roi_loc[i][0] - roi_h/2)
+            x1 = int(roi_loc[i][0] + roi_h/2)
+            y0 = int(roi_loc[i][1] - roi_w/2)
+            y1 = int(roi_loc[i][1] + roi_w/2)
+            roi_x = roi_loc[i][0]
+            roi_y = roi_loc[i][1]
+            debug_img = "4"
+            roi_img = image[y0:y1,x0:x1]
+            roi_img = roi_img.T
+
+        # print(f"Roi corners: {x0}\t{x1}\t{y0}\t{y1}")
 
 
-    find_center_pixel(
-        image = roi,
-        center_position = (roi_x,roi_y),
-        search_size = 500,
-        slant = False,
-        search_method = "sdrm",
-        debug = True,
-        debug_prefix = debug_prefix
-    )
+        i+=1
 
+        roi = roi_img
+
+        if debug & (sub_roi in ("top","bottom","right","left")): 
+            print(f"\nWhich ROI:{sub_roi}")
+            print(f"\t{x0}\t{y0}\t{x1}\t{y1}\t")
+            h, w = image.shape[:2]
+            print(f"\tImage Size:\theight:{h}\twidth:{w}")
+            h, w = crop.shape[:2]
+            print(f"\tCrop Size:\theight:{h}\twidth:{w}")
+            print(f"\troi_center_x:{roi_x}")
+            print(f"\roi_center_y:{roi_y}")
+
+            overlay = draw_box_on_image(overlay,corner1=(x0,y0),corner2=(x1,y1),width=3,color=(0,255,255))
+
+
+            cv2.imwrite(f"{debug_prefix}05.jpg",image)
+            cv2.imwrite(f"{debug_prefix}10-{debug_img}.jpg",crop)
+            cv2.imwrite(f"{debug_prefix}11.jpg",overlay)
+            cv2.imwrite(f"{debug_prefix}12-{debug_img}.jpg",roi_img)
+
+
+            # print(f"roi size:{roi.size}")
+            # print(f"roi shape:{roi.shape}")
+            # print(f"roi[:,0] size:{roi[:,0].size}")
+            # print(f"roi[0,:] size:{roi[0,:].size}")
+            # print("max",max(roi.shape))
+
+        pos_center, pos_left = find_center_pixel(
+            image = roi,
+            center_position = (roi_x,roi_y),
+            search_size = int(max(roi.shape)/2-2),
+            slant = False,
+            search_method = "sdrm",
+            debug = True,
+            debug_prefix = debug_prefix
+        )
+        
+        measured_center = roi_x + pos_center
+        print(f"measured_center is:{measured_center}")
 
     # -------------------------
     # 3) Crosshair detection (placeholder)
@@ -502,7 +689,8 @@ def find_cross_center(
 def run():
     pass
     # cleanup folders
-    
+    clear_folder("./test_out") # clear the test folder  
+
     # Generate list of images to process. 
     images = []
     # images.extend(["blob-5.jpg","blob-6.jpg","blob-11.jpg","blob-12.jpg"])
@@ -510,7 +698,7 @@ def run():
     prefix_out = "./test_out/"
     images.extend(["blob-5.jpg"])
 
-    cx_list=[0.4,0.6,0.25,0.6]
+    cx_list=[0.37,0.6,0.25,0.6]
     cy_list=[0.35,0.7,0.35,0.4]
     x_pct_list=[0.6,0.6,0.6,0.6]
     y_pct_list=[0.6,0.6,0.6,0.6]
@@ -535,9 +723,9 @@ def run():
 
         find_cross_center(
             image=img,
-            crop_center = (cx_list[i],cy_list[i]),
-            crop_size = (x_crop_list[i],y_crop_list[i]),
-            roi_size = (50,10),
+            crop_center = (cx_list[i-1],cy_list[i-1]),
+            crop_size = (x_crop_list[i-1],y_crop_list[i-1]),
+            roi_size = (600,100),
             slant = False,
             debug = True,
             debug_prefix = debug_image_prefix
