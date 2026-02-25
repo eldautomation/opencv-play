@@ -14,6 +14,9 @@ Edits applied:
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Iterable, Sequence
+
 import logging
 import math
 import os
@@ -24,6 +27,7 @@ from typing import Iterable, Sequence
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
+import statistics
 
 
 LOGGER = logging.getLogger(__name__)
@@ -54,7 +58,7 @@ def clear_folder(folder_path: str | os.PathLike[str], *, create: bool = False) -
 
     if not path.exists():
         if create:
-            path.mkdir(parents=True, exist_ok=True)
+            path.mkdir(parents=True, existSyok=True)
             return
         raise FileNotFoundError(f"Folder does not exist: {path}")
 
@@ -495,50 +499,322 @@ def plot_xy_positions(
 # ----------------------------
 # Center finding
 # ----------------------------
-def _symmetric_diff_rms_minimum(profile: np.ndarray, max_offset: int) -> int:
+def sdrm(values, search_size, debug = True, debug_prefix = "./test_out/test-"):
     """
-    Symmetric difference RMS minimum (SDRM) for 1D signals.
 
-    For each integer offset k in [-max_offset, max_offset], compute:
-        rms(profile - reversed(profile shifted by k))
+    --------
+    Inputs
+    --------
+    values: 
+        A 1D array of floating point number. 
+        This is the data who's center we want to find. 
+    search_size: int 
+        This is the size of the window we want to search. 
+    debug: bool 
+        This determines if the debug information is output 
+    debug_prefix: str 
+        A prefix used for saving images. 
+
+    --------        
+    Outputs: 
+    --------
+    peak_from_left: 
+        The position of the pixel, measured from the left of the area
+    peak_from_center: 
+        The position of the pixel, easured from the distance from the center pixel.
+
+
+    """
+    values = np.asarray(values, dtype=np.float64)
+
+    if values.ndim != 1:
+        raise ValueError("Input must be a 1D list or array")
+    if not isinstance(search_size,int):
+        raise ValueError("search_size must be an integer")
+    if search_size < 0:
+        raise ValueError("search_size must be >= 0")
+
+    indices = np.arange(len(values), dtype=np.float64)
+    values_flipped = np.flip(values)
+
+
+    # print(f"length of indices:{len(indices)}")
+    # print(f"length of values:{len(values)}")
+    # print(f"length of values_flipped:{len(values_flipped)}")
+    # Assume uniform spacing
+
+    step = indices[1] - indices[0]
+
+    sums = []
+    sums2 = []
+    sums3 = []
+
+    x = np.average(values) # adjusts to background (average) to help avoid issues with rss going high because the backgroudn is bright. 
+
+    for i in range (2*search_size+1):
+        j = 2*search_size-i
+        k = -1*search_size+i # Calcualted as the offset from the center pixel
+
+        # Generate new index ranges
+        lower_indices = indices[0] - step * np.arange(j, 0, -1)
+        upper_indices = indices[-1] + step * np.arange(1, i)
+
+        padded_indices = np.concatenate([lower_indices, indices, upper_indices])
+        padded_values  = np.concatenate([np.ones(j)*x, values,         np.ones(i)*x])
+        flipped_values =np.concatenate([np.ones(i)*x , values_flipped, np.ones(j)*x]) 
+
+        diff = padded_values - flipped_values
+        rss = math.sqrt(float(np.sum(diff * diff)))
+
+        # print(f"i :{i}\tj :{j}\tindex:{indices[i]}\tl_pad:{l_pad}\tl_flip:{l_flip}\trss:{rss}")
+        # print(f"i :{i}\tj :{j}\tindex:{indices[i]}\trss:{rss}")
+        
+        # print(f"i :{i}\tj :{j}\tk:{k}\tindex:{indices[i]}\trss:{rss}")
+
+        sums.append((i,rss))
+        sums2.append((indices[i],rss))
+        sums3.append((k,rss))
+
+
+    min_point = min(sums, key=lambda t: t[1]) # 
+    min_point2 = min(sums2, key=lambda t: t[1])# 
+    min_point3 = min(sums3, key=lambda t: t[1])# Calculated
+
+    if debug: 
+        plot_xy_positions(padded_values,x_label = "Pixel Value", y_label = "Pixel Intensity", title = "Padded Values", save_path = debug_prefix+"---sdrm-padded.jpg",dpi = 300)
+        plot_xy_positions(flipped_values,x_label = "Pixel Value", y_label = "PIxel Intensity", title = "Flipped Values", save_path = debug_prefix+"---sdrm-flpped.jpg",dpi = 300)
+        plot_xy_positions(sums2,x_label = "Pixel Value", y_label = "Rss Values", title = "Rss value", save_path = debug_prefix+"---sdrm-rss-from-left.jpg",dpi = 300)
+        plot_xy_positions(sums3,x_label = "Pixel Value, corrected", y_label = "Rss Values", title = "Rss value", save_path = debug_prefix+"---srdm-rss-centered.jpg",dpi = 300)
+
+        print(f"search_size:\t{search_size}")
+        # print(f"min point1:{min_point}")
+        # print(f"min point2:{min_point2}")
+        print(f"min point3:{min_point3}")
+
+        # print(f"sums:\n{sums}")
+        # print(f"sums2:\n{sums2}")
+
+    peak_from_left  = min_point[0]
+    peak_from_center = min_point3[0]
+
+    return peak_from_center
+
+
+def sdrm_2(
+    values,
+    search_size: int,
+    q_limit:float,
+    debug: bool = True,
+    debug_prefix: str = "./test_out/test-",
+) -> int:
+    """
+    Symmetric Difference RMS Minimum (SDRM) center offset estimator for 1D signals.
+
+    This function preserves the original SDRM algorithm:
+    - Reverse the signal
+    - Pad both original and reversed signals with a baseline value (mean)
+    - For each offset in [-search_size, +search_size], compute RSS between padded arrays
+    - Return the offset (from center) that minimizes RSS
+
+    Parameters
+    ----------
+    values:
+        1D sequence/array of numeric values.
+    search_size:
+        Non-negative integer window size to search on each side of center.
+    q_limit:
+        Non-Negative integer between 0 and 1.  Used to determine if the response is stable.
+    debug:
+        If True, write debug plots and print key diagnostics.
+    debug_prefix:
+        File prefix for debug plot outputs.
 
     Returns
     -------
-    best_k:
-        Offset (negative/positive) that minimizes the RMS.
+    peak_from_center:
+        Integer offset (negative/positive) from center pixel that minimizes RSS.
     """
-    if max_offset < 0:
-        raise ValueError("max_offset must be >= 0")
-    prof = np.asarray(profile, dtype=np.float64)
-    if prof.ndim != 1:
-        raise ValueError("profile must be 1D")
-    n = prof.size
+    # ----------------------------
+    # Type + shape checks
+    # ----------------------------
+    if not isinstance(search_size, int):
+        raise TypeError(f"search_size must be int, got {type(search_size).__name__}")
+    if search_size < 0:
+        raise ValueError(f"search_size must be >= 0, got {search_size}")
+
+    arr = np.asarray(values, dtype=np.float64)
+    if arr.ndim != 1:
+        raise ValueError(f"values must be 1D; got shape {arr.shape}")
+    n = int(arr.size)
     if n == 0:
-        raise ValueError("profile is empty")
+        raise ValueError("values is empty")
+    if n < 2:
+        # The algorithm uses indices[1] - indices[0] in the original code.
+        # With fewer than 2 points, the notion of "step" is undefined.
+        raise ValueError("values must contain at least 2 elements")
 
-    baseline = float(np.mean(prof))
-    rev = prof[::-1]
+    if not isinstance(debug, (bool, np.bool_)):
+        raise TypeError(f"debug must be bool, got {type(debug).__name__}")
+    if not isinstance(debug_prefix, str):
+        raise TypeError(f"debug_prefix must be str, got {type(debug_prefix).__name__}")
 
-    best_k = 0
-    best_rms = float("inf")
+    if not isinstance(q_limit,(float,np.float32, np.float64)):
+        raise TypeError(f"q_limit must be a float, got {type(q_limit).__name__}")
+    if not 0 < q_limit < 1:
+        raise ValueError(f"q_limit must be between 0 and 1, got {q_limit}")
 
-    # Pad with baseline to avoid edge bias
-    pad = max_offset
-    prof_p = np.pad(prof, (pad, pad), mode="constant", constant_values=baseline)
-    rev_p = np.pad(rev, (pad, pad), mode="constant", constant_values=baseline)
+    # ----------------------------
+    # Core algorithm (kept same)
+    # ----------------------------
+    indices = np.arange(n, dtype=np.float64)
+    values_flipped = np.flip(arr)
 
-    for k in range(-max_offset, max_offset + 1):
-        # shift rev by k relative to prof
-        a = prof_p[pad : pad + n]
-        b = rev_p[pad + k : pad + k + n]
-        diff = a - b
-        rms = float(np.sqrt(np.mean(diff * diff)))
-        if rms < best_rms:
-            best_rms = rms
-            best_k = k
+    step = float(indices[1] - indices[0])  # uniform spacing; equals 1.0 with arange
 
-    return best_k
+    # Baseline padding value (original code uses average to reduce background bias)
+    baseline = float(np.average(arr))
 
+    # Records for diagnostics / plotting
+    rss_by_i = []        # (i, rss)
+    rss_by_x = []        # (indices[i], rss)  NOTE: indices[i] uses i in [0..2*search_size]
+    rss_by_k = []        # (k, rss) where k is offset from center: [-search_size .. +search_size]
+
+    last_padded_values = None
+    last_flipped_values = None
+
+    # i ranges over total padding distribution (left/right)
+    # original: for i in range (2*search_size+1):
+    for i in range(2 * search_size + 1):
+        j = 2 * search_size - i          # left pad count
+        k = -search_size + i             # offset from center
+
+        # Build padded index ranges (kept for parity; not used in RSS)
+        # lower_indices = indices[0] - step * np.arange(j, 0, -1)
+        # upper_indices = indices[-1] + step * np.arange(1, i)
+        # padded_indices = np.concatenate([lower_indices, indices, upper_indices])
+
+        padded_values = np.concatenate(
+            [np.full(j, baseline, dtype=np.float64), arr, np.full(i, baseline, dtype=np.float64)]
+        )
+        flipped_values = np.concatenate(
+            [np.full(i, baseline, dtype=np.float64), values_flipped, np.full(j, baseline, dtype=np.float64)]
+        )
+
+        diff = padded_values - flipped_values
+        rss = math.sqrt(float(np.sum(diff * diff)))
+
+        rss_by_i.append((i, rss))
+
+        # Preserve the original behavior: this indexing assumes n is large enough
+        # for indices[i] when i <= 2*search_size. If not, we fail fast with a clear message.
+        if i >= n:
+            raise ValueError(
+                f"search_size too large for values length: i={i} exceeds n-1={n-1}. "
+                f"Require len(values) > 2*search_size (got len={n}, search_size={search_size})."
+            )
+
+        rss_by_x.append((float(indices[i]), rss))
+        rss_by_k.append((int(k), rss))
+
+        last_padded_values = padded_values
+        last_flipped_values = flipped_values
+
+    arr = np.asarray(rss_by_i, dtype=float)   # shape (N, 2)
+    y_values = arr[:, 1]
+
+    me = statistics.mean(y_values)
+    ma = max(y_values)
+    mi = min(y_values)
+    r1 = mi/me 
+    r2 = mi/ma
+
+
+    # Choose minima (original did 3 mins; only k is used for return)
+    min_i = min(rss_by_i, key=lambda t: t[1])    # (i, rss)
+    min_k = min(rss_by_k, key=lambda t: t[1])    # (k, rss)
+
+    # ----------------------------
+    # Debug outputs / plots
+    # ----------------------------
+    if debug:
+        # Mirror the original plotting behavior: show padded arrays and RSS curves.
+        # These plots require plot_xy_positions to exist in the caller's module.
+        if last_padded_values is not None:
+            plot_xy_positions(
+                last_padded_values,
+                x_label="Pixel Position",
+                y_label="Pixel Intensity",
+                title="Padded Values (last iteration)",
+                save_path=f"{debug_prefix}-padded_values.jpg",
+                dpi=300,
+            )
+        if last_flipped_values is not None:
+            plot_xy_positions(
+                last_flipped_values,
+                x_label="Pixel Position",
+                y_label="Pixel Intensity",
+                title="Flipped Values (last iteration)",
+                save_path=f"{debug_prefix}-flipped_values.jpg",
+                dpi=300,
+            )
+
+        plot_xy_positions(
+            rss_by_x,
+            x_label="Pixel Position",
+            y_label="RSS",
+            title="RSS vs position (indices[i])",
+            save_path=f"{debug_prefix}-rss_vs_pos.jpg",
+            dpi=300,
+        )
+        plot_xy_positions(
+            rss_by_k,
+            x_label="Offset from center (k)",
+            y_label="RSS",
+            title="RSS vs center offset (k)",
+            save_path=f"{debug_prefix}-rss_vs_offset.jpg",
+            dpi=300,
+        )
+
+        print(f"[SDRM] len(values)={n}")
+        print(f"[SDRM] search_size={search_size}")
+        print(f"[SDRM] baseline(mean)={baseline:.6g}")
+        print(f"[SDRM] min_i=(i={min_i[0]}, rss={min_i[1]:.6g})")
+        print(f"[SDRM] min_k=(k={min_k[0]}, rss={min_k[1]:.6g})")
+        print(f"[SDRM] mean rss value={me}")
+        print(f"[SDRM] min rss value={mi}")
+        print(f"[SDRM] max rss value={ma}")
+        print(f"[SDRM] min rss / mean rss={r1}")
+        print(f"[SDRM] min rss / max rss={r2}")
+
+
+        # if r1 > 0.7:
+        #     src = f"{debug_prefix}-rss_vs_pos.jpg"
+        #     dst = f"{debug_prefix}-rss_vs_pos-007.jpg"
+        #     shutil.copyfile(src,dst)
+        # elif r1 > 0.6:
+        #     src = f"{debug_prefix}-rss_vs_pos.jpg"
+        #     dst = f"{debug_prefix}-rss_vs_pos-006.jpg"
+        #     shutil.copyfile(src,dst)
+        # elif r1 > 0.5:
+        #     src = f"{debug_prefix}-rss_vs_pos.jpg"
+        #     dst = f"{debug_prefix}-rss_vs_pos-005.jpg"
+        #     shutil.copyfile(src,dst)
+        # elif r1 > 0.4:
+        #     src = f"{debug_prefix}-rss_vs_pos.jpg"
+        #     dst = f"{debug_prefix}-rss_vs_pos-004.jpg"
+        #     shutil.copyfile(src,dst)
+        # elif r1 > 0.3:
+        #     src = f"{debug_prefix}-rss_vs_pos.jpg"
+        #     dst = f"{debug_prefix}-rss_vs_pos-003.jpg"
+        #     shutil.copyfile(src,dst)
+
+
+    # Original function returned peak_from_center only
+    peak_from_center = int(min_k[0])
+    if r1 > q_limit:
+        peak_from_center = None
+
+    return peak_from_center, r1
 
 def find_center_pixel(
     image: np.ndarray,
@@ -627,7 +903,10 @@ def find_center_pixel(
         else:
             # Work on a symmetric chunk around the center to make SDRM meaningful
             chunk = profile[center_in_window - max_off : center_in_window + max_off + 1]
-            best_k = _symmetric_diff_rms_minimum(chunk, max_off)
+            # best_kk = sdrm(chunk,max_off,debug = True, debug_prefix = f"{debug_prefix}")
+            best_k,q_ratio = sdrm_2(chunk,max_off,q_limit=0.5,debug = True, debug_prefix = f"{debug_prefix}")
+            if best_k == None:
+                return None,q_ratio
             pos_x = float(window_center + best_k)
 
             if debug:
@@ -637,13 +916,13 @@ def find_center_pixel(
                      for k in range(-max_off, max_off + 1)],
                     dtype=np.float64,
                 )
-                plot_xy_positions(
-                    pairs,
-                    x_label="Offset (px)",
-                    y_label="RMS",
-                    title="SDRM score vs offset",
-                    save_path=f"{debug_prefix}_sdrm.jpg",
-                )
+                # plot_xy_positions(
+                #     pairs,
+                #     x_label="Offset (px)",
+                #     y_label="RMS",
+                #     title="SDRM score vs offset",
+                #     save_path=f"{debug_prefix}_sdrm.jpg",
+                # )
 
     else:
         raise ValueError(f"Unknown search_method: {search_method!r}")
@@ -658,8 +937,7 @@ def find_center_pixel(
             pos_x,
         )
 
-    # Backwards-compat: return two values (center, left)
-    return pos_x, pos_x
+    return pos_x, q_ratio
 
 
 # ----------------------------
@@ -757,7 +1035,7 @@ def find_cross_center(
             if roi.size == 0:
                 raise ValueError(f"Empty ROI for {name} after clipping")
             center_in_roi = (roi.shape[1] / 2.0, roi.shape[0] / 2.0)
-            pos_x, _ = find_center_pixel(
+            pos_x, q_ratio = find_center_pixel(
                 roi,
                 center_position=center_in_roi,
                 search_size=max(1, roi.shape[1] // 2 - 2),
@@ -765,6 +1043,10 @@ def find_cross_center(
                 debug=debug,
                 debug_prefix=f"{debug_prefix}_{name}",
             )
+            if pos_x == None:
+                LOGGER.warning(f"Quality too low for reliable center finding: {q_ratio}")
+                return None, (None,None)
+
             measured = (float(x0) + pos_x, float(y0) + center_in_roi[1])
 
         else:
@@ -779,7 +1061,7 @@ def find_cross_center(
                 raise ValueError(f"Empty ROI for {name} after clipping")
             roi = roi0.T
             center_in_roi = (roi.shape[1] / 2.0, roi.shape[0] / 2.0)
-            pos_x, _ = find_center_pixel(
+            pos_x, q_ratio = find_center_pixel(
                 roi,
                 center_position=center_in_roi,
                 search_size=max(1, roi.shape[1] // 2 - 2),
@@ -787,6 +1069,11 @@ def find_cross_center(
                 debug=debug,
                 debug_prefix=f"{debug_prefix}_{name}",
             )
+
+            if pos_x == None:
+                LOGGER.warning(f"Quality too low for reliable center finding: {q_ratio}")
+                return None, (None,None)
+
             # pos_x is along original y because of transpose
             measured = (float(x0) + (roi0.shape[1] / 2.0), float(y0) + pos_x)
 
@@ -873,6 +1160,8 @@ def run_demo() -> None:
     x_crop_px = pct_list_to_int_list(x_pct_list, width)
     y_crop_px = pct_list_to_int_list(y_pct_list, height)
 
+    s="Summary:\n"
+
     for i, fname in enumerate(images, start=1):
         img = cv2.imread(str(prefix_in / fname))
         if img is None:
@@ -890,6 +1179,11 @@ def run_demo() -> None:
         )
         LOGGER.info("Initial position=%s angles=%s", position, angles)
 
+        if position == None:
+            print(f"file ({fname}) failed.  Prefix:{prefix_in}")
+            s+=f"fname:{fname}\tprefix:{prefix_out}\tx0:{x0}\ty0:{y0}\n"
+            continue
+
         crop_pixels = min(x_crop_px[i - 1], y_crop_px[i - 1])
         position2, angles2 = find_cross_center(
             image=img,
@@ -900,6 +1194,20 @@ def run_demo() -> None:
             debug_prefix=f"{debug_prefix}_refined",
         )
         LOGGER.info("Refined position=%s angles=%s", position2, angles2)
+
+        x0 = position[0]
+        x1 = position2[0]
+        y0 = position[1]
+        y1 = position2[1]
+
+        s+=f"fname:{fname}\tprefix:{prefix_out}\tx0:{x0}\ty0:{y0}\tx1:{x1}\ty1{y1}\t\n"
+
+        if position == None:
+            print(f"file ({fname}) failed.  Prefix:{prefix_in}")
+            continue
+        
+    print(s)
+
 
 
 if __name__ == "__main__":

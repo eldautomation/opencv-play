@@ -1,3 +1,4 @@
+import logging
 import cv2
 import numpy as np
 import math
@@ -6,26 +7,53 @@ import matplotlib.pyplot as plt
 import warnings
 import os
 import shutil
+from pathlib import Path
+from typing import Iterable, Sequence
 
-def clear_folder(folder_path: str):
+
+LOGGER = logging.getLogger(__name__)
+
+# ----------------------------
+# Filesystem helpers
+# ----------------------------
+def clear_folder(folder_path: str | os.PathLike[str], *, create: bool = False) -> None:
     """
-    Delete all files and subdirectories inside folder_path.
-    The folder itself is preserved.
+    Delete all files and subdirectories inside ``folder_path`` (the folder itself is preserved).
+
+    Parameters
+    ----------
+    folder_path:
+        Path to the folder whose contents should be deleted.
+    create:
+        If True, create the folder if it does not exist.
+
+    Raises
+    ------
+    FileNotFoundError:
+        If the folder does not exist and ``create`` is False.
+    NotADirectoryError:
+        If the path exists but is not a directory.
     """
+    path = Path(folder_path)
 
-    if not os.path.exists(folder_path):
-        raise ValueError(f"Folder does not exist: {folder_path}")
+    if not path.exists():
+        if create:
+            path.mkdir(parents=True, existSyok=True)
+            return
+        raise FileNotFoundError(f"Folder does not exist: {path}")
 
-    if not os.path.isdir(folder_path):
-        raise ValueError(f"Path is not a folder: {folder_path}")
+    if not path.is_dir():
+        raise NotADirectoryError(f"Path is not a folder: {path}")
 
-    for entry in os.listdir(folder_path):
-        full_path = os.path.join(folder_path, entry)
+    for entry in path.iterdir():
+        try:
+            if entry.is_symlink() or entry.is_file():
+                entry.unlink()
+            elif entry.is_dir():
+                shutil.rmtree(entry)
+        except Exception as exc:  # pragma: no cover
+            raise OSError(f"Failed to delete '{entry}': {exc}") from exc
 
-        if os.path.isfile(full_path) or os.path.islink(full_path):
-            os.unlink(full_path)  # delete file
-        elif os.path.isdir(full_path):
-            shutil.rmtree(full_path)  # delete folder recursively
 
 def pct_list_to_int_list(pct_list,scale):
     """
@@ -686,51 +714,78 @@ def find_cross_center(
     angle = "jk"
     return position, angle
 
-def run():
-    pass
-    # cleanup folders
-    clear_folder("./test_out") # clear the test folder  
+# ----------------------------
+# Test harness (optional)
+# ----------------------------
+def run_demo() -> None:
+    """
+    Example workflow used by the original file.
 
-    # Generate list of images to process. 
-    images = []
-    # images.extend(["blob-5.jpg","blob-6.jpg","blob-11.jpg","blob-12.jpg"])
-    prefix_in = "./test_in/"
-    prefix_out = "./test_out/"
-    images.extend(["blob-5.jpg"])
+    This is intentionally not executed on import.
+    """
+    logging.basicConfig(level=logging.INFO)
 
-    cx_list=[0.37,0.6,0.25,0.6]
-    cy_list=[0.35,0.7,0.35,0.4]
-    x_pct_list=[0.6,0.6,0.6,0.6]
-    y_pct_list=[0.6,0.6,0.6,0.6]
-    line_width_list=[3,3,3,3]
+    prefix_in = Path("./test_in")
+    prefix_out = Path("./test_out")
+    clear_folder(prefix_out, create=True)
 
+    images = [
+        "blob-05.jpg",
+        "blob-06.jpg",
+        "blob-08.jpg",
+        "blob-09.jpg",
+        "blob-11.jpg",
+        "blob-12.jpg",
+    ]
 
-    # Convert percentages to pixels
-    img = cv2.imread(prefix_in+images[0])
-    height, width, channels = img.shape
-    cx_list = pct_list_to_int_list(cx_list,width)
-    cy_list = pct_list_to_int_list(cy_list,height)
-    x_crop_list = pct_list_to_int_list(x_pct_list,width)        
-    y_crop_list = pct_list_to_int_list(y_pct_list,height)
+    # Approximate percent centers and crop sizes (original values)
+    cx_list = [0.37, 0.6, 0.27, 0.6, 0.3, 0.6, 0.5]
+    cy_list = [0.5, 0.7, 0.35, 0.4, 0.4, 0.4, 0.4]
+    x_pct_list = [0.4, 0.6, 0.4, 0.6, 0.4, 0.6, 0.6]
+    y_pct_list = [0.4, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6]
 
-    # Begin running for each image.
-    i=0
-    for n in images: 
-        i+=1
+    first = cv2.imread(str(prefix_in / images[0]))
+    if first is None:
+        raise FileNotFoundError(f"Cannot read image: {prefix_in / images[0]}")
+    height, width = first.shape[:2]
 
-        img = cv2.imread(prefix_in+n)
-        debug_image_prefix = f"{prefix_out}debug-{i}-"
+    cx_px = pct_list_to_int_list(cx_list, width)
+    cy_px = pct_list_to_int_list(cy_list, height)
+    x_crop_px = pct_list_to_int_list(x_pct_list, width)
+    y_crop_px = pct_list_to_int_list(y_pct_list, height)
 
-        find_cross_center(
+    for i, fname in enumerate(images, start=1):
+        img = cv2.imread(str(prefix_in / fname))
+        if img is None:
+            LOGGER.warning("Skipping unreadable image: %s", fname)
+            continue
+
+        debug_prefix = str(prefix_out / f"debug-{i}")
+        position, angles = find_cross_center(
             image=img,
-            crop_center = (cx_list[i-1],cy_list[i-1]),
-            crop_size = (x_crop_list[i-1],y_crop_list[i-1]),
-            roi_size = (600,100),
-            slant = False,
-            debug = True,
-            debug_prefix = debug_image_prefix
+            crop_center=(cx_px[i - 1], cy_px[i - 1]),
+            crop_size=(x_crop_px[i - 1], y_crop_px[i - 1]),
+            roi_size=(500, 20),
+            debug=True,
+            debug_prefix=debug_prefix,
         )
+        LOGGER.info("Initial position=%s angles=%s", position, angles)
+
+        crop_pixels = min(x_crop_px[i - 1], y_crop_px[i - 1])
+        print("crop pixelx:",crop_pixels)
+        print("position:",position)
+        position2, angles2 = find_cross_center(
+            image=img,
+            crop_center=(int(position[0]), int(position[1])),
+            crop_size=(crop_pixels, crop_pixels),
+            roi_size=(500, 20),
+            debug=True,
+            debug_prefix=f"{debug_prefix}_refined",
+        )
+        LOGGER.info("Refined position=%s angles=%s", position2, angles2)
 
 
-
-run()
+if __name__ == "__main__":
+    # Uncomment to run the demo workflow.
+    run_demo()
+    pass
