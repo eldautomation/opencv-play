@@ -1,0 +1,8 @@
+README.md
+pyproject.toml
+src/autocollimator/targetfinding.py
+src/autocollimator.egg-info/PKG-INFO
+src/autocollimator.egg-info/SOURCES.txt
+src/autocollimator.egg-info/dependency_links.txt
+src/autocollimator.egg-info/requires.txt
+src/autocollimator.egg-info/top_level.txt
