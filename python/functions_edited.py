@@ -1065,6 +1065,10 @@ def find_cross_center(
     cx_crop, cy_crop = int(crop_center[0]), int(crop_center[1])
     crop_w, crop_h = int(crop_size[0]), int(crop_size[1])
     roi_w, roi_h = int(roi_size[0]), int(roi_size[1])
+    roi_w  = min(crop_w,crop_h)
+    roi_w_v = crop_h
+    roi_w_h = crop_h
+
 
     if crop_w <= 0 or crop_h <= 0:
         raise ValueError("crop_size values must be > 0")
@@ -1103,10 +1107,19 @@ def find_cross_center(
     for name, (rx, ry) in roi_centers.items():
         if name in ("top", "bottom"):
             # ROI is wide in x, short in y
-            x0 = int(rx - roi_w / 2)
-            x1 = int(rx + roi_w / 2)
-            y0 = int(ry - roi_h / 2)
-            y1 = int(ry + roi_h / 2)
+            s = 0
+            if name == "top":
+                s = 1
+            x0 = int(rx - roi_w /2 )
+            x1 = int(rx + roi_w /2 )
+            y0 = int(ry - roi_h /2 )
+            y1 = int(ry + roi_h /2 )
+
+            y0 = int(ry - roi_h * (1-s) )
+            y1 = int(ry + roi_h * (s-0) )
+
+            print(f"name:{name}\trx:{rx}\try:{ry}\ty0:{y0}\ty1:{y1}")
+
             x0, y0, x1, y1 = _clip_roi(x0, y0, x1, y1, w_img, h_img)
             roi = gray[y0:y1, x0:x1]
             if roi.size == 0:
@@ -1128,10 +1141,17 @@ def find_cross_center(
 
         else:
             # ROI is tall in y, short in x; transpose so we still search along x-axis
+            s = 0
+            if name == "right":
+                s = 1
             x0 = int(rx - roi_h / 2)
             x1 = int(rx + roi_h / 2)
             y0 = int(ry - roi_w / 2)
             y1 = int(ry + roi_w / 2)
+
+            x0 = int(rx - roi_h * (s-0) )
+            x1 = int(rx + roi_h * (1-s) )
+
             x0, y0, x1, y1 = _clip_roi(x0, y0, x1, y1, w_img, h_img)
             roi0 = gray[y0:y1, x0:x1]
             if roi0.size == 0:
