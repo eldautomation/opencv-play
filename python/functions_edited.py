@@ -155,6 +155,83 @@ def pixels_to_pct(pixel_coords: tuple[int, int], image_size: tuple[int, int]) ->
 
     return float(pix_x) / float(size_x), float(pix_y) / float(size_y)
 
+def line_intersection(line1: Line, line2: Line) -> Point:
+    """
+    Compute the intersection point of two infinite lines defined by two points each.
+
+    Parameters
+    ----------
+    line1 : ((x0, y0), (x1, y1))
+    line2 : ((x2, y2), (x3, y3))
+
+    Returns
+    -------
+    (x, y) : tuple[float, float]
+        Intersection point rounded to nearest hundredth (2 decimal places).
+
+    Raises
+    ------
+    TypeError
+        If inputs are not properly structured numeric pairs.
+    ValueError
+        If lines are degenerate (identical points) or parallel.
+    """
+
+    # ----------------------------
+    # Input validation
+    # ----------------------------
+    def _validate_line(line, name: str):
+        if not isinstance(line, (tuple, list)) or len(line) != 2:
+            raise TypeError(f"{name} must be a tuple/list of two points")
+
+        for i, pt in enumerate(line):
+            if not isinstance(pt, (tuple, list)) or len(pt) != 2:
+                raise TypeError(f"{name}[{i}] must be a tuple/list of two numeric values")
+            if not all(isinstance(v, (int, float)) for v in pt):
+                raise TypeError(f"{name}[{i}] must contain numeric values")
+
+        (x0, y0), (x1, y1) = line
+        if x0 == x1 and y0 == y1:
+            raise ValueError(f"{name} defines a degenerate line (identical points)")
+
+    _validate_line(line1, "line1")
+    _validate_line(line2, "line2")
+
+    (x0, y0), (x1, y1) = line1
+    (x2, y2), (x3, y3) = line2
+
+    # Convert to float for numerical stability
+    x0, y0, x1, y1 = map(float, (x0, y0, x1, y1))
+    x2, y2, x3, y3 = map(float, (x2, y2, x3, y3))
+
+    # ----------------------------
+    # Compute intersection
+    # ----------------------------
+    # Line1: (x0,y0) + t*(dx1,dy1)
+    # Line2: (x2,y2) + u*(dx2,dy2)
+
+    dx1 = x1 - x0
+    dy1 = y1 - y0
+    dx2 = x3 - x2
+    dy2 = y3 - y2
+
+    # Determinant
+    denom = dx1 * dy2 - dy1 * dx2
+
+    if math.isclose(denom, 0.0, abs_tol=1e-12):
+        raise ValueError("Lines are parallel or coincident; no unique intersection")
+
+    # Solve for t
+    t = ((x2 - x0) * dy2 - (y2 - y0) * dx2) / denom
+
+    x_int = x0 + t * dx1
+    y_int = y0 + t * dy1
+
+    # Round to nearest hundredth
+    x_int = round(x_int, 2)
+    y_int = round(y_int, 2)
+
+    return (x_int, y_int)
 
 # ----------------------------
 # Image type helpers
@@ -904,7 +981,7 @@ def find_center_pixel(
             # Work on a symmetric chunk around the center to make SDRM meaningful
             chunk = profile[center_in_window - max_off : center_in_window + max_off + 1]
             # best_kk = sdrm(chunk,max_off,debug = True, debug_prefix = f"{debug_prefix}")
-            best_k,q_ratio = sdrm_2(chunk,max_off,q_limit=0.5,debug = True, debug_prefix = f"{debug_prefix}")
+            best_k,q_ratio = sdrm_2(chunk,max_off,q_limit=0.5,debug = False, debug_prefix = f"{debug_prefix}")
             if best_k == None:
                 return None,q_ratio
             pos_x = float(window_center + best_k)
@@ -1092,9 +1169,14 @@ def find_cross_center(
     right = centers_measured["right"]
     left = centers_measured["left"]
 
-    x_center = (top[0] + bottom[0]) / 2.0
-    y_center = (right[1] + left[1]) / 2.0
-    center = (x_center, y_center)
+    # old center finding algoithm - not accurate. 
+    # x_center = (top[0] + bottom[0]) / 2.0
+    # y_center = (right[1] + left[1]) / 2.0
+    # center = (x_center, y_center)
+    
+    l1 = (top,bottom)
+    l2 = (left, right)
+    center = line_intersection(l1, l2)
 
     # Angles: use atan2 for robustness
     # Vertical tilt (from vertical): dx over dy between top and bottom
@@ -1107,13 +1189,16 @@ def find_cross_center(
     dx_h = (right[0] - left[0])
     angle_h = float(np.degrees(np.arctan2(-dy_h, dx_h)))
 
+    if angle_h<0:angle_h = angle_h+180
+    if angle_v<0:angle_v = angle_v+180
+
     if debug:
         overlay = draw_crosshair(overlay, center, leg_length=12, width=3, color=(0, 0, 255))
         overlay = draw_line_through_points(overlay, top, bottom, thickness=1, color=(255, 0, 255), extend=True)
         overlay = draw_line_through_points(overlay, right, left, thickness=1, color=(255, 0, 255), extend=True)
         cv2.imwrite(f"{debug_prefix}_overlay.jpg", overlay)
 
-        LOGGER.info("Measured angles (vertical, horizontal): (%.3f, %.3f)", angle_v, angle_h)
+        # LOGGER.info("Measured angles (vertical, horizontal): (%.3f, %.3f)", angle_v, angle_h)
 
     _ = slant  # placeholder for future behavior
 
@@ -1180,8 +1265,7 @@ def run_demo() -> None:
         LOGGER.info("Initial position=%s angles=%s", position, angles)
 
         if position == None:
-            print(f"file ({fname}) failed.  Prefix:{prefix_in}")
-            s+=f"fname:{fname}\tprefix:{prefix_out}\tx0:{x0}\ty0:{y0}\n"
+            LOGGER.warning(f"file ({fname}) failed to find reliable centerpoint.  Prefix:{prefix_in}")
             continue
 
         crop_pixels = min(x_crop_px[i - 1], y_crop_px[i - 1])
@@ -1200,7 +1284,7 @@ def run_demo() -> None:
         y0 = position[1]
         y1 = position2[1]
 
-        s+=f"fname:{fname}\tprefix:{prefix_out}\tx0:{x0}\ty0:{y0}\tx1:{x1}\ty1{y1}\t\n"
+        s+=f"fname:{fname}\tprefix:{debug_prefix}\tx0:{x0}\ty0:{y0}\tx1:{x1}\ty1:{y1}\t\n"
 
         if position == None:
             print(f"file ({fname}) failed.  Prefix:{prefix_in}")
