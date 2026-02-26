@@ -58,7 +58,7 @@ def clear_folder(folder_path: str | os.PathLike[str], *, create: bool = False) -
 
     if not path.exists():
         if create:
-            path.mkdir(parents=True, existSyok=True)
+            path.mkdir(parents=True, exist_ok=True)
             return
         raise FileNotFoundError(f"Folder does not exist: {path}")
 
