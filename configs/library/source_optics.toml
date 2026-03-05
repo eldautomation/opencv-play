@@ -1,0 +1,15 @@
+[[source_optics]]
+id = 201
+name = "Crosshair-1"
+line_thickness = 2.0
+feature_a_x = 0.1
+feature_a_y = -0.2
+efl = 25.0
+
+[[source_optics]]
+id = 202
+name = "Crosshair-2"
+line_thickness = 1.5
+feature_a_x = 0.0
+feature_a_y = 0.0
+efl = 30.0

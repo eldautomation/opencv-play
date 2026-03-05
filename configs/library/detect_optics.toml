@@ -1,0 +1,11 @@
+[[detect_optics]]
+optic_id = 301
+name = "Detect-Optic-A"
+efl1 = 50.0
+efl2 = 100.0
+
+[[detect_optics]]
+optic_id = 302
+name = "Detect-Optic-B"
+efl1 = 35.0
+efl2 = 70.0
