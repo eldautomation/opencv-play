@@ -1,0 +1,9 @@
+[[io_hardware]]
+id = 401
+name = "IO-Board-A"
+description = "USB GPIO + temp sensor"
+
+[[io_hardware]]
+id = 402
+name = "IO-Board-B"
+description = "Ethernet DAQ + thermistors"

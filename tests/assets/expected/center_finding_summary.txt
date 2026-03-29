@@ -1,0 +1,7 @@
+Summary:
+blob-05.jpg	prefix:/home/cherrmann/projects/opencv-play/outputs/integration/center_finding/debug-1	x0:747.360	y0:399.830	x1:747.570	y1:399.950
+blob-06.jpg	prefix:/home/cherrmann/projects/opencv-play/outputs/integration/center_finding/debug-2	x0:1151.270	y0:743.500	x1:1150.990	y1:743.010
+blob-08.jpg	prefix:/home/cherrmann/projects/opencv-play/outputs/integration/center_finding/debug-3	x0:392.740	y0:385.360	x1:392.640	y1:385.370
+blob-09.jpg	FAILED	prefix:/home/cherrmann/projects/opencv-play/outputs/integration/center_finding/debug-4
+blob-11.jpg	prefix:/home/cherrmann/projects/opencv-play/outputs/integration/center_finding/debug-5	x0:393.280	y0:385.750	x1:392.580	y1:384.990
+blob-12.jpg	prefix:/home/cherrmann/projects/opencv-play/outputs/integration/center_finding/debug-6	x0:1098.810	y0:436.530	x1:1098.470	y1:434.940
