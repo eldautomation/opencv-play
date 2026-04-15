@@ -4,7 +4,8 @@ import cv2
 
 from autocollimator.app import AutocollimatorApp
 from autocollimator.target_utils import pct_list_to_int_list
-
+from dataclasses import replace
+from time import sleep
 
 # note: use run with this: PYTHONPATH=src python scripts/demo_app.py
 
@@ -72,7 +73,7 @@ def main() -> int:
         
 
         cx_list = [0.47, 0.6, 0.27, 0.6, 0.3, 0.6, 0.5]
-        cy_list = [0.5, 0.7, 0.35, 0.5, 0.4, 0.4, 0.4]
+        cy_list = [0.5, 0.7, 0.25, 0.5, 0.4, 0.4, 0.4]
         x_pct_list = [0.6, 0.6, 0.4, 0.7, 0.4, 0.6, 0.6]
         y_pct_list = [0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6]
 
@@ -88,21 +89,6 @@ def main() -> int:
         x_crop_px = pct_list_to_int_list(x_pct_list, width)
         y_crop_px = pct_list_to_int_list(y_pct_list, height)
 
-        ###
-
-
-        ###
-        # def run_center_finding_on_image(
-        #     app: "AutocollimatorApp",
-        #     image: np.ndarray,
-        #     *,
-        #     crop_center: tuple[int, int] | None = None,
-        #     crop_size: tuple[int, int] | None = None,
-        #     roi_size: tuple[int, int] = (500, 20),
-        #     debug: bool = False,
-        #     debug_prefix: str | Path | None = None,
-        ###
-
         for i in range(len(image_names)):
             cx0 = cx_px[i]
             cy0 = cy_px[i]
@@ -110,10 +96,10 @@ def main() -> int:
             y_crop0 = y_crop_px[i]
             image_name = image_names[i]
 
-            print(f"i is:{i}\t\t name is:{image_name}")            
-            if "09" not in image_name:
-                print(f"Rejecting image - looking for '09' ")
-                continue
+            # print(f"i is:{i}\t\t name is:{image_name}")            
+            # if "09" not in image_name:
+            #     print(f"Rejecting image - looking for '09' ")
+            #     continue
 
 
             print("\n--- Image Processing ---")
@@ -128,7 +114,8 @@ def main() -> int:
 
             print(f"cy,cy:{cx0},{cy0}\t\tx_crop,y_crop:{x_crop0},{y_crop0}\t\troi_size:500,20")
 
-            debug_name = "debug-"+image_name[:-4]
+            # debug_name = "debug-"+image_name[:-4]
+            debug_name = "debug-"+str(i)
 
             measurement_output, overlay_image = app.run_center_finding_on_image(
                 image=source_image,
@@ -138,9 +125,24 @@ def main() -> int:
 
             print(f"Result - success:{measurement_output.measured_values.success}")
 
-            measurement_output = measurement_output
+            measurement_output = replace(
+                    measurement_output,
+                    image_name=image_name,
+                )
 
-            app.save_measurement_output(measurement_output,source_image,overlay_image)
+            input_path, overlay_path, yaml_path = app.save_measurement_output(
+                measurement_output,
+                source_image,
+                overlay_image,
+            )
+
+            print(f"input_path:{input_path}")
+            print(f"overlay_path:{overlay_path}")
+            print(f"yaml_path:{yaml_path}")
+
+            print("sleeping to avoid namespace collisions")
+            sleep(1.7)
+
 
             # print(result)
 

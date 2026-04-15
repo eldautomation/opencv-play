@@ -289,6 +289,7 @@ class MeasurementOutput:
     quality_limits: QualityLimits
     measured_values: MeasuredValues
     recommendations: Recommendations
+    measurement_name: str
     image_name: str
     image_hash: str
     output_units: str
@@ -302,6 +303,7 @@ class MeasurementOutput:
             quality_limits=QualityLimits.from_dict(d["quality_limits"]),
             measured_values=MeasuredValues.from_dict(d["measured_values"]),
             recommendations=Recommendations.from_dict(d["recommendations"]),
+            measurement_name=_require_str("measurement_output.measurement_name",d["measurement_name"]),
             image_name=_require_str("measurement_output.image_name", d["image_name"]),
             image_hash=_require_str("measurement_output.image_hash", d["image_hash"]),
             output_units=_require_str("measurement_output.output_units", d["output_units"]),

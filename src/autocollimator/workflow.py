@@ -281,10 +281,11 @@ def run_center_finding_on_image(
         quality_limits = qls,
         measured_values = measured_values,
         recommendations = recommendations,
-        image_name = "Test",
+        measurement_name = "Measurement_Placeholder",
+        image_name = "Image_Placeholder",
         image_hash = image_hash,
         output_units = "Pixels",
-        pixel_to_unit_scale_factor = 0,
+        pixel_to_unit_scale_factor = 1,
     )
 
     return measurement_output, overlay_image

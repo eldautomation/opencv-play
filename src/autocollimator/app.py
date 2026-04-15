@@ -6,6 +6,9 @@ import numpy as np
 from pathlib import Path
 from typing import Any
 
+from datetime import datetime
+import re
+from dataclasses import replace
 
 from autocollimator.config.models import (
     Device,
@@ -24,6 +27,7 @@ from autocollimator.config.store import (
     load_library,
     load_main,
     validate_device_references,
+    save_measurement_output as store_save_measurement_output,
 )
 
 from autocollimator.workflow import (
@@ -89,6 +93,36 @@ class AutocollimatorApp:
             self.context.input_dir,
             self.context.output_dir,
         )
+
+
+    def _sanitize_filename_part(self, value: str) -> str:
+        """
+        Convert a string into a filesystem-safe filename fragment.
+        """
+        cleaned = value.strip().replace(" ", "-")
+        cleaned = re.sub(r"[^A-Za-z0-9._-]", "-", cleaned)
+        cleaned = re.sub(r"-{2,}", "-", cleaned)
+        return cleaned.strip("-") or "unknown"
+
+
+    def build_output_prefix(self, timestamp: datetime | None = None) -> str:
+        """
+        Build a shared filename prefix:
+
+        {device-name}_{device-serial-number}_{YYYY-MM-DD_HH-mm-ss}
+        """
+        if not self.is_started:
+            raise RuntimeError("Application is not started. Call startup() first.")
+
+        device = self.get_current_config()
+        ts = timestamp or datetime.now()
+
+        device_name = self._sanitize_filename_part(device.name)
+        serial_number = self._sanitize_filename_part(device.serial_number)
+        timestamp_str = ts.strftime("%Y-%m-%d_%H-%M-%S")
+
+        return f"{device_name}_{serial_number}_{timestamp_str}"
+
 
     def startup(self) -> None:
         """
@@ -332,7 +366,7 @@ class AutocollimatorApp:
         *,
         debug: bool = False,
         debug_prefix: str | Path | None = None,
-    ) -> MeasurementOutput:
+    ) -> tuple[MeasurementOutput, np.ndarray]:
         """
         User-facing wrapper for the center-finding workflow.
         """
@@ -350,9 +384,29 @@ class AutocollimatorApp:
             debug_prefix=debug_prefix,
         )
     
-    def save_measurement_output(self,measurement_result):
-        print("save_measurement_output not yet implemented")
-        pass
+    def save_measurement_output(
+        self,
+        measurement_result: MeasurementOutput,
+        input_image: np.ndarray,
+        overlay_image: np.ndarray,
+    ) -> tuple[Path, Path, Path]:
+        """
+        Save input image, overlay image, and measurement YAML with a shared prefix.
+        """
+        if not self.is_started:
+            raise RuntimeError("Application is not started. Call startup() first.")
+
+        self.context.output_dir.mkdir(parents=True, exist_ok=True)
+
+        prefix = self.build_output_prefix()
+
+        return store_save_measurement_output(
+            output_dir=self.context.output_dir,
+            prefix=prefix,
+            measurement=measurement_result,
+            input_image=input_image,
+            overlay_image=overlay_image,
+        )
 
 
 

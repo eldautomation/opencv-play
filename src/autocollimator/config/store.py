@@ -8,6 +8,9 @@ import yaml
 
 import tomli
 import tomli_w
+import cv2
+
+from dataclasses import replace
 
 from .models import (
     Device,
@@ -65,6 +68,23 @@ def _index_by_id(items: list, id_attr: str) -> dict[str, Any]:
         out[k] = item
     return out
 
+def _ensure_output_dir(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+
+
+def _write_image(path: Path, image) -> None:
+    """
+    Save an image array to disk.
+
+    Raises
+    ------
+    ValueError
+        If OpenCV fails to write the file.
+    """
+    ok = cv2.imwrite(str(path), image)
+    if not ok:
+        raise ValueError(f"Failed to write image: {path}")
+    
 
 def resolve_env_vars(s: str) -> str:
     return os.path.expandvars(s)
@@ -412,10 +432,56 @@ def load_measurement_output(path: Path) -> MeasurementOutput:
     return MeasurementOutput.from_dict(raw)
 
 
-def save_measurement_output(path: Path, measurement: MeasurementOutput) -> None:
-    _save_yaml(path, asdict(measurement))
+def save_measurement_output(
+    output_dir: Path,
+    prefix: str,
+    measurement: MeasurementOutput,
+    input_image,
+    overlay_image,
+) -> tuple[Path, Path, Path]:
+    """
+    Save a measurement bundle using a shared prefix.
 
+    Files written:
+    - {prefix}_input.png
+    - {prefix}_overlay.png
+    - {prefix}_measurement.yaml
 
+    Parameters
+    ----------
+    output_dir:
+        Folder where files should be written.
+    prefix:
+        Shared filename prefix.
+    measurement:
+        MeasurementOutput dataclass to persist.
+    input_image:
+        Raw source image as a NumPy array.
+    overlay_image:
+        Overlay/debug image as a NumPy array.
 
+    Returns
+    -------
+    tuple[Path, Path, Path]
+        Paths to (input_image_path, overlay_image_path, measurement_yaml_path)
+    """
+    _ensure_output_dir(output_dir)
 
-    
+    input_path = output_dir / f"{prefix}_input.png"
+    overlay_path = output_dir / f"{prefix}_overlay.png"
+    measurement_path = output_dir / f"{prefix}_measurement.yaml"
+
+    _write_image(input_path, input_image)
+    _write_image(overlay_path, overlay_image)
+
+    measurement = replace(
+            measurement,
+            measurement_name=prefix,
+        )
+
+    # Persist a YAML-safe measurement object.
+    # Current schema does not store image paths, only hashes and metadata,
+    # so we keep the measurement as-is and write it after images are saved.
+    _save_yaml(measurement_path, asdict(measurement))
+
+    return input_path, overlay_path, measurement_path
