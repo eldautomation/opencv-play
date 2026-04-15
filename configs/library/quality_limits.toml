@@ -1,0 +1,19 @@
+[[quality_limits]]
+id = "801"
+name = "Default Limits"
+rss_ratio = 0.5
+brightness_ratio = 5.0
+max_brightness = 250.0
+min_brightness = 40.0
+linewidth = 20.0
+metric_tolerance = 0.2
+
+[[quality_limits]]
+id = "802"
+name = "Strict Limits"
+rss_ratio = 0.2
+brightness_ratio = 10.0
+max_brightness = 230.0
+min_brightness = 20.0
+linewidth = 10.0
+metric_tolerance = 0.1

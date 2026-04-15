@@ -1,0 +1,12 @@
+[[measurement_parameters]]
+id = "901"
+name = "Default Parameters"
+crop_center_x = 872
+crop_center_y = 544
+crop_size_x = 1018
+crop_size_y = 652
+roi_size_x = 500
+roi_size_y = 20
+
+
+

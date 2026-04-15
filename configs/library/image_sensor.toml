@@ -1,15 +1,15 @@
 [[image_sensor]]
-id = 101
-name = "IMX477"
+id = "101"
+name = "Sony IMX296LQR-C"
 manufacturer = "Sony"
-part_number = "IMX477"
-pixel_size_x = 1.55
-pixel_size_y = 1.55
-pixels_x = 4056
-pixels_y = 3040
+part_number = "IMX296LQR-C"
+pixel_size_x = 3.45
+pixel_size_y = 3.45
+pixels_x = 1456
+pixels_y = 1088
 
 [[image_sensor]]
-id = 102
+id = "102"
 name = "IMX678"
 manufacturer = "Sony"
 part_number = "IMX678"
@@ -18,12 +18,3 @@ pixel_size_y = 2.0
 pixels_x = 3840
 pixels_y = 2160
 
-[[image_sensor]]
-id = 3
-name = "IMX900"
-manufacturer = "Sony"
-part_number = "IMX900"
-pixel_size_x = 3.2
-pixel_size_y = 3.2
-pixels_x = 2048
-pixels_y = 2048

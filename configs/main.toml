@@ -1,13 +1,18 @@
 [device]
-id = 1
+id = "001"
 name = "Bench-Unit-1"
-serial_number = "2025-12345"
+serial_number = "2026-00001"
 date = "2026-03-06"
 software_version = "0.0.1"
 encryption_key = "${DEVICE_ENCRYPTION_KEY}"
 
-image_sensor_id = 101
-source_optics_id = 201
-detect_optics_id = 301
-io_hardware_id = 401
+image_sensor_id = "101"
+source_optics_id = "201"
+detect_optics_id = "301"
+io_hardware_id = "401"
+
+quality_limits_id="801"
+measurement_parameters_id = "901"
+
+
 

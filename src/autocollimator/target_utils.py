@@ -14,21 +14,19 @@ Edits applied:
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Iterable, Sequence
 
 import logging
 import math
 import os
 import shutil
-from pathlib import Path
-from typing import Iterable, Sequence
-
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 import statistics
+import hashlib
 
+from pathlib import Path
+from typing import Iterable, Sequence
 
 LOGGER = logging.getLogger(__name__)
 
@@ -74,6 +72,75 @@ def clear_folder(folder_path: str | os.PathLike[str], *, create: bool = False) -
         except Exception as exc:  # pragma: no cover
             raise OSError(f"Failed to delete '{entry}': {exc}") from exc
 
+
+def image_md5(image: np.ndarray) -> str:
+    """
+    Compute an MD5 hash for an image array.
+
+    This is intended for data integrity / change detection only, not security.
+
+    The hash includes:
+    - image dtype
+    - image shape
+    - contiguous pixel bytes
+
+    Parameters
+    ----------
+    image:
+        Image as a NumPy array.
+
+    Returns
+    -------
+    str
+        Hex MD5 digest.
+
+    Raises
+    ------
+    TypeError
+        If image is not a NumPy array.
+    ValueError
+        If image is empty.
+    """
+    if not isinstance(image, np.ndarray):
+        raise TypeError(f"image must be np.ndarray, got {type(image).__name__}")
+
+    if image.size == 0:
+        raise ValueError("image is empty")
+
+    image_c = np.ascontiguousarray(image)
+
+    hasher = hashlib.md5()
+    hasher.update(str(image_c.dtype).encode("utf-8"))
+    hasher.update(str(image_c.shape).encode("utf-8"))
+    hasher.update(image_c.tobytes())
+
+    digest = hasher.hexdigest()
+
+    LOGGER.debug(
+        "Computed image MD5: %s (shape=%s dtype=%s)",
+        digest,
+        image_c.shape,
+        image_c.dtype,
+    )
+
+    return digest
+
+def file_md5(path: str | Path, chunk_size: int = 1024 * 1024) -> str:
+    """
+    Compute an MD5 hash of a file's raw bytes.
+    """
+    file_path = Path(path)
+    if not file_path.exists():
+        raise FileNotFoundError(f"File not found: {file_path}")
+    if not file_path.is_file():
+        raise ValueError(f"Path is not a file: {file_path}")
+
+    hasher = hashlib.md5()
+    with file_path.open("rb") as f:
+        for chunk in iter(lambda: f.read(chunk_size), b""):
+            hasher.update(chunk)
+
+    return hasher.hexdigest()
 
 # ----------------------------
 # Numeric helpers
@@ -852,16 +919,16 @@ def sdrm_2(
             dpi=300,
         )
 
-        print(f"[SDRM] len(values)={n}")
-        print(f"[SDRM] search_size={search_size}")
-        print(f"[SDRM] baseline(mean)={baseline:.6g}")
-        print(f"[SDRM] min_i=(i={min_i[0]}, rss={min_i[1]:.6g})")
-        print(f"[SDRM] min_k=(k={min_k[0]}, rss={min_k[1]:.6g})")
-        print(f"[SDRM] mean rss value={me}")
-        print(f"[SDRM] min rss value={mi}")
-        print(f"[SDRM] max rss value={ma}")
-        print(f"[SDRM] min rss / mean rss={r1}")
-        print(f"[SDRM] min rss / max rss={r2}")
+        LOGGER.debug(f"SDRM - len(values)={n}")
+        LOGGER.debug(f"SDRM - search_size={search_size}")
+        LOGGER.debug(f"SDRM - baseline(mean)={baseline:.6g}")
+        LOGGER.debug(f"SDRM - min_i=(i={min_i[0]}, rss={min_i[1]:.6g})")
+        LOGGER.debug(f"SDRM - min_i=(i={min_i[0]}, rss={min_i[1]:.6g})")
+        LOGGER.debug(f"SDRM - min_k=(k={min_k[0]}, rss={min_k[1]:.6g})")
+        LOGGER.debug(f"SDRM - mean rss value={mi}")
+        LOGGER.debug(f"SDRM - min rss value={ma}")
+        LOGGER.debug(f"SDRM - min rss / mean rss={r1}")
+        LOGGER.debug(f"SDRM - min rss / max rss={r2}")    
 
 
         # if r1 > 0.7:
@@ -897,6 +964,7 @@ def find_center_pixel(
     image: np.ndarray,
     center_position: tuple[float, float],
     search_size: int,
+    q_limit:float,
     *,
     search_method: str = "sdrm",
     debug: bool = False,
@@ -981,7 +1049,7 @@ def find_center_pixel(
             # Work on a symmetric chunk around the center to make SDRM meaningful
             chunk = profile[center_in_window - max_off : center_in_window + max_off + 1]
             # best_kk = sdrm(chunk,max_off,debug = True, debug_prefix = f"{debug_prefix}")
-            best_k,q_ratio = sdrm_2(chunk,max_off,q_limit=0.5,debug = False, debug_prefix = f"{debug_prefix}")
+            best_k,q_ratio = sdrm_2(chunk,max_off,q_limit=q_limit,debug = debug, debug_prefix = f"{debug_prefix}")
             if best_k == None:
                 return None,q_ratio
             pos_x = float(window_center + best_k)
@@ -1016,7 +1084,6 @@ def find_center_pixel(
 
     return pos_x, q_ratio
 
-
 # ----------------------------
 # Crosshair center estimation
 # ----------------------------
@@ -1036,6 +1103,7 @@ def find_cross_center(
     crop_center: tuple[int, int],
     crop_size: tuple[int, int],
     roi_size: tuple[int, int],
+    q_limit:float,
     *,
     slant: bool = False,
     debug: bool = False,
@@ -1049,6 +1117,15 @@ def find_cross_center(
     This implementation uses four ROIs (top/right/bottom/left) around a crop region.
     Each ROI is reduced to a 1D profile and centered using ``find_center_pixel``.
     """
+
+    LOGGER.info(
+        "Running center-finding util with crop_center=%s crop_size=%s roi_size=%s debug=%s",
+        crop_center,
+        crop_size,
+        roi_size,
+        debug,
+    )
+
     if image is None:
         raise ValueError("image is None")
     if not isinstance(image, np.ndarray):
@@ -1093,6 +1170,8 @@ def find_cross_center(
     overlay = ensure_bgr_u8(gray)
     if debug:
         overlay = draw_box_on_image(overlay, (cx0, cy0), (cx1 - 1, cy1 - 1), width=3, color=(255, 0, 0))
+        # LOGGER.debug(f"overlay file save location: {debug_prefix}_overlay.jpg")
+        cv2.imwrite(f"{debug_prefix}_overlay.jpg", overlay)
 
     # ROI centers in full-image coordinates (approximate)
     roi_centers = {
@@ -1104,7 +1183,18 @@ def find_cross_center(
 
     centers_measured: dict[str, tuple[float, float]] = {}
 
+    # LOGGER.debug(f"Debug value in find_cross_center: {debug}")
+    # LOGGER.debug(f"ROI Centers: {roi_centers.items()}")
+
+    # for name,(rx,ry) in roi_centers.items():
+    #         LOGGER.debug(f"ROI Name: {name}")
+
+    measure_fail = 0
+    q_ratio_list = []
     for name, (rx, ry) in roi_centers.items():
+        # LOGGER.debug(f"Inside the ROI Loop - Name of ROI:{name}")
+        # LOGGER.debug(f"Find Cross Center - Debug prefix: {debug_prefix}_overlay.jpg")
+
         if name in ("top", "bottom"):
             # ROI is wide in x, short in y
             s = 0
@@ -1118,7 +1208,7 @@ def find_cross_center(
             y0 = int(ry - roi_h * (1-s) )
             y1 = int(ry + roi_h * (s-0) )
 
-            print(f"name:{name}\trx:{rx}\try:{ry}\ty0:{y0}\ty1:{y1}")
+            # print(f"name:{name}\trx:{rx}\try:{ry}\ty0:{y0}\ty1:{y1}")
 
             x0, y0, x1, y1 = _clip_roi(x0, y0, x1, y1, w_img, h_img)
             roi = gray[y0:y1, x0:x1]
@@ -1129,13 +1219,17 @@ def find_cross_center(
                 roi,
                 center_position=center_in_roi,
                 search_size=max(1, roi.shape[1] // 2 - 2),
+                q_limit=q_limit,
                 search_method="sdrm",
-                debug=debug,
+                debug=False,
                 debug_prefix=f"{debug_prefix}_{name}",
             )
+
+            # LOGGER.debug(f"Quality ratio of center finding: {q_ratio}")
             if pos_x == None:
-                LOGGER.warning(f"Quality too low for reliable center finding: {q_ratio}")
-                return None, (None,None)
+                LOGGER.warning(f"For ROI {name}, Quality too low for reliable center finding: {q_ratio}")
+                measure_fail = True
+                pos_x=0 # Note - will not be used for computation, because "measure_fail" should trigger
 
             measured = (float(x0) + pos_x, float(y0) + center_in_roi[1])
 
@@ -1162,18 +1256,21 @@ def find_cross_center(
                 roi,
                 center_position=center_in_roi,
                 search_size=max(1, roi.shape[1] // 2 - 2),
+                q_limit=q_limit,
                 search_method="sdrm",
-                debug=debug,
+                debug=False,
                 debug_prefix=f"{debug_prefix}_{name}",
             )
 
             if pos_x == None:
-                LOGGER.warning(f"Quality too low for reliable center finding: {q_ratio}")
-                return None, (None,None)
+                LOGGER.warning(f"For ROI {name}, Quality too low for reliable center finding: {q_ratio}")
+                measure_fail = True
+                pos_x=0 # Note - will not be used for computation, because "measure_fail" should trigger
 
             # pos_x is along original y because of transpose
             measured = (float(x0) + (roi0.shape[1] / 2.0), float(y0) + pos_x)
 
+        q_ratio_list.append(float(round(q_ratio,3)))
         centers_measured[name] = measured
 
         if debug:
@@ -1182,6 +1279,13 @@ def find_cross_center(
 
         if debug:
             LOGGER.debug("%s ROI bounds: (%d,%d)-(%d,%d) measured=%s", name, x0, y0, x1, y1, measured)
+
+    if debug:
+        cv2.imwrite(f"{debug_prefix}_overlay.jpg", overlay)
+
+    if measure_fail: 
+        LOGGER.warning(f"Quality too low for reliable center finding: - No center computed")
+        return (None,None), (None,None),overlay,q_ratio_list
 
     # Combine centers
     top = centers_measured["top"]
@@ -1216,13 +1320,15 @@ def find_cross_center(
         overlay = draw_crosshair(overlay, center, leg_length=12, width=3, color=(0, 0, 255))
         overlay = draw_line_through_points(overlay, top, bottom, thickness=1, color=(255, 0, 255), extend=True)
         overlay = draw_line_through_points(overlay, right, left, thickness=1, color=(255, 0, 255), extend=True)
+        LOGGER.debug(f"Find Cross Center - overlay file output: {debug_prefix}_overlay.jpg")
+        LOGGER.debug(f"Quality ratio from boxes: {q_ratio_list}")
         cv2.imwrite(f"{debug_prefix}_overlay.jpg", overlay)
 
         # LOGGER.info("Measured angles (vertical, horizontal): (%.3f, %.3f)", angle_v, angle_h)
 
     _ = slant  # placeholder for future behavior
 
-    return center, (angle_v, angle_h)
+    return center, (angle_v, angle_h), overlay, q_ratio_list
 
 
 # ----------------------------
