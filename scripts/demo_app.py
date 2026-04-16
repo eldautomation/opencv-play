@@ -5,6 +5,7 @@ import cv2
 from autocollimator.app import AutocollimatorApp
 from autocollimator.target_utils import pct_list_to_int_list
 from dataclasses import replace
+from dataclasses import dataclass
 from time import sleep
 
 # note: use run with this: PYTHONPATH=src python scripts/demo_app.py
@@ -89,12 +90,62 @@ def main() -> int:
         x_crop_px = pct_list_to_int_list(x_pct_list, width)
         y_crop_px = pct_list_to_int_list(y_pct_list, height)
 
-        for i in range(len(image_names)):
-            cx0 = cx_px[i]
-            cy0 = cy_px[i]
-            x_crop0 = x_crop_px[i]
-            y_crop0 = y_crop_px[i]
-            image_name = image_names[i]
+
+        def _require_int(name: str, v) -> int:
+            if isinstance(v, bool) or not isinstance(v, int):
+                raise TypeError(f"{name} must be int, got {type(v).__name__}")
+            return v
+
+        def _require_str(name: str, v) -> str:
+            if not isinstance(v, str):
+                raise TypeError(f"{name} must be str, got {type(v).__name__}")
+            if not v.strip():
+                raise ValueError(f"{name} cannot be empty")
+            return v
+
+        @dataclass(frozen=True)
+        class MeasureStructure:
+            image:str
+            cx_pix:int
+            cy_pix:int
+            cr_x_pix:int
+            cr_y_pix:int
+        
+            @staticmethod
+            def from_dict(d:dict) -> "MeasureStructure":
+                return MeasureStructure(
+                    image=  _require_str("measure_structure.image",d["image"]),
+                    cx_pix= _require_int("measure_structure.cx_pix",d["cx_pix"]),
+                    cy_pix= _require_int("measure_structure.cy_pix",d["cy_pix"]),
+                    cr_x_pix= _require_int("measure_structure.cr_x_px",d["cr_x_pix"]),
+                    cr_y_pix= _require_int("measure_structure.c_ry_px",d["cr_y_pix"]),
+                )
+
+        measure_list = []
+        measure_list.append(MeasureStructure("blob-05.jpg",1,2,3,4))
+        measure_list.append(MeasureStructure("blob-06.jpg",1,2,3,4))
+        measure_list.append(MeasureStructure("blob-08.jpg",1,2,3,4))
+        measure_list.append(MeasureStructure("blob-09.jpg",1,2,3,4))
+        measure_list.append(MeasureStructure("blob-11.jpg",1,2,3,4))
+        measure_list.append(MeasureStructure("blob-12.jpg",1,2,3,4))
+        measure_list.append(MeasureStructure("blob-13.jpg",1,2,3,4))
+        measure_list.append(MeasureStructure("blob-14.jpg",1,2,3,4))
+        measure_list.append(MeasureStructure("blob-15.jpg",1,2,3,4))
+        measure_list.append(MeasureStructure("blob-16.jpg",1,2,3,4))
+        measure_list.append(MeasureStructure("blob-17.jpg",1,2,3,4))
+        measure_list.append(MeasureStructure("blob-18.jpg",1,2,3,4))
+        measure_list.append(MeasureStructure("blob-19.jpg",1,2,3,4))
+        measure_list.append(MeasureStructure("blob-20.jpg",1,2,3,4))
+        measure_list.append(MeasureStructure("blob-21.jpg",1,2,3,4))
+        measure_list.append(MeasureStructure("blob-22.jpg",1,2,3,4))
+
+
+        for i in range(len(measure_list)):
+            # cx0 = cx_px[i]
+            # cy0 = cy_px[i]
+            # x_crop0 = x_crop_px[i]
+            # y_crop0 = y_crop_px[i]
+            image_name = measure_list[i].image
 
             # print(f"i is:{i}\t\t name is:{image_name}")            
             # if "09" not in image_name:
@@ -112,7 +163,7 @@ def main() -> int:
                 raise FileNotFoundError(f"Could not read image: {image_path}")
 
 
-            print(f"cy,cy:{cx0},{cy0}\t\tx_crop,y_crop:{x_crop0},{y_crop0}\t\troi_size:500,20")
+            # print(f"cy,cy:{cx0},{cy0}\t\tx_crop,y_crop:{x_crop0},{y_crop0}\t\troi_size:500,20")
 
             # debug_name = "debug-"+image_name[:-4]
             debug_name = "debug-"+str(i)
