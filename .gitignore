@@ -27,3 +27,6 @@ dist/
 
 # Your integration outputs
 outputs/
+
+*:Zone.Identifier
+*:mshield
