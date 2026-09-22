@@ -16,7 +16,7 @@ precision with 3.45 µm pixels. Precision is the product — treat it as a first
 - Unit tests: `pytest -m unit`
 - Integration tests: `pytest -m integration` (add `--keep-output` to keep artifacts under `outputs/integration/`)
 - All tests: `pytest`
-- Demo: `PYTHONPATH=src python scripts/demo_app.py`
+- Demo: `PYTHONPATH=src python3 scripts/demo_app.py`
 
 ## Layout
 - `src/autocollimator/app.py` — AutocollimatorApp: lifecycle, config access, user-facing API
@@ -40,3 +40,5 @@ precision with 3.45 µm pixels. Precision is the product — treat it as a first
 - Do not commit anything under `outputs/`.
 - Source files currently use CRLF line endings; preserve the existing ending in files you edit unless the task is line-ending normalization.
 - Known review findings are tracked in `docs/code_review_2026-09.md` with IDs R1–R14. Reference those IDs in commit messages.
+- Always write `python3` (not `python`) in commands and documentation.
+
