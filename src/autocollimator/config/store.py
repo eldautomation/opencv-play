@@ -4,6 +4,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 import os
+import re
 import sys
 import yaml
 
@@ -94,6 +95,33 @@ def resolve_env_vars(s: str) -> str:
     return os.path.expandvars(s)
 
 
+_ENV_REF = re.compile(r"\$\{([^}]*)\}")
+DEFAULT_KEY_ENV_VAR = "DEVICE_ENCRYPTION_KEY"
+
+
+def _resolve_encryption_key(raw_value, config_path: Path) -> str:
+    """
+    Expand environment variables in device.encryption_key and require a real key.
+
+    Raises ConfigError naming the environment variable(s) to set if the result is empty
+    or still contains an unexpanded ${...}. The key value itself is never included.
+    """
+    if not isinstance(raw_value, str):
+        raise ConfigError(f"device.encryption_key in {config_path} must be a string")
+
+    key = resolve_env_vars(raw_value)
+    unresolved = _ENV_REF.findall(key)
+    if key.strip() and not unresolved:
+        return key
+
+    names = unresolved or _ENV_REF.findall(raw_value) or [DEFAULT_KEY_ENV_VAR]
+    var_list = ", ".join(names)
+    raise ConfigError(
+        f"device.encryption_key in {config_path} is not set: set the environment variable "
+        f"{var_list} before starting (e.g. export {names[0]}=...)."
+    )
+
+
 def load_library(config_dir: Path) -> dict[str, Any]:
     lib = config_dir / "library"
 
@@ -133,7 +161,7 @@ def load_main(config_dir: Path) -> Device:
         raise ConfigError("main.toml must contain [device] table")
 
     d = dict(raw["device"])
-    d["encryption_key"] = resolve_env_vars(d.get("encryption_key", ""))
+    d["encryption_key"] = _resolve_encryption_key(d.get("encryption_key", ""), config_dir / "main.toml")
     return Device.from_dict(d)
 
 
@@ -486,6 +514,9 @@ def save_measurement_output(
     # Persist a YAML-safe measurement object.
     # Current schema does not store image paths, only hashes and metadata,
     # so we keep the measurement as-is and write it after images are saved.
-    _save_yaml(measurement_path, asdict(measurement))
+    # The device encryption key is a secret and is never written (R6).
+    data = asdict(measurement)
+    data["hardware"]["device"].pop("encryption_key", None)
+    _save_yaml(measurement_path, data)
 
     return input_path, overlay_path, measurement_path

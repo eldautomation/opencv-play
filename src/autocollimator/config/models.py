@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 
@@ -14,6 +14,12 @@ def _require_float(name: str, v) -> float:
     if isinstance(v, bool) or not isinstance(v, (int, float)):
         raise TypeError(f"{name} must be float, got {type(v).__name__}")
     return float(v)
+
+
+def _require_type_str(name: str, v) -> str:
+    if not isinstance(v, str):
+        raise TypeError(f"{name} must be str, got {type(v).__name__}")
+    return v
 
 
 def _require_str(name: str, v) -> str:
@@ -133,7 +139,8 @@ class Device:
     id: str
     name: str
     serial_number: str
-    encryption_key: str
+    # Secret: kept out of repr, logs and saved measurement files (R6).
+    encryption_key: str = field(repr=False)
     image_sensor_id: str
     source_optics_id: str
     io_hardware_id: str
@@ -147,7 +154,9 @@ class Device:
             id=_require_str("device.id", d["id"]),
             name=_require_str("device.name", d["name"]),
             serial_number=_require_str("device.serial_number", d["serial_number"]),
-            encryption_key=_require_str("device.encryption_key", d["encryption_key"]),
+            # Measurement records are saved without the key, so it may be absent here;
+            # load_main enforces that a configured device has a real key.
+            encryption_key=_require_type_str("device.encryption_key", d.get("encryption_key", "")),
             image_sensor_id=_require_str("device.image_sensor_id", d["image_sensor_id"]),
             source_optics_id=_require_str("device.source_optics_id", d["source_optics_id"]),
             io_hardware_id=_require_str("device.io_hardware_id", d["io_hardware_id"]),

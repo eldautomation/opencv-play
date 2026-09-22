@@ -25,6 +25,7 @@ import csv
 import html
 import logging
 import shutil
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -34,6 +35,7 @@ import yaml
 from dataclasses import replace
 
 from autocollimator.app import AutocollimatorApp
+from autocollimator.config.store import ConfigError
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
 ROI_NAMES = ("top", "bottom", "right", "left")  # order of rss_ratio_r0..r3
@@ -234,8 +236,12 @@ def main() -> int:
     run_dir = args.out / stamp
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    with AutocollimatorApp(config_dir=args.config, output_dir=run_dir) as app:
-        q_limit = app.get_quality_limits().rss_ratio
+    try:
+        with AutocollimatorApp(config_dir=args.config, output_dir=run_dir) as app:
+            q_limit = app.get_quality_limits().rss_ratio
+    except ConfigError as exc:
+        print(f"Configuration error: {exc}", file=sys.stderr)
+        return 2
 
     rows = evaluate(args.images, args.config, run_dir, overrides)
     write_csv(rows, run_dir / "results.csv")

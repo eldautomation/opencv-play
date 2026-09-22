@@ -1,3 +1,10 @@
+import os
+
+# load_main requires a real device key (R6). Use an obviously fake one for tests
+# unless the environment already provides one.
+os.environ.setdefault("DEVICE_ENCRYPTION_KEY", "test-dummy-key")
+
+
 def pytest_addoption(parser):
     parser.addoption(
         "--keep-output",

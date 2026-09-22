@@ -1,8 +1,10 @@
 from pathlib import Path
 import logging
+import sys
 import cv2
 
 from autocollimator.app import AutocollimatorApp
+from autocollimator.config.store import ConfigError
 from autocollimator.target_utils import pct_list_to_int_list
 from dataclasses import replace
 from dataclasses import dataclass
@@ -199,6 +201,10 @@ def main() -> int:
 
 
         return 0
+
+    except ConfigError as exc:
+        print(f"Configuration error: {exc}", file=sys.stderr)
+        return 2
 
     finally:
         app.shutdown()
