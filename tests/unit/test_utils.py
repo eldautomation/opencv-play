@@ -15,10 +15,10 @@ def test_pct_list_to_int_list_empty():
 
 @pytest.mark.unit
 def test_pct_list_to_int_list_invalid_type():
-    with pytest.raises(TypeError):
-        pct_list_to_int_list([10, "bad", 30])
+    with pytest.raises(TypeError, match=r"pct_list\[1\] must be numeric"):
+        pct_list_to_int_list([10, "bad", 30], 100)
 
 @pytest.mark.unit
 def test_pct_list_to_int_list_none():
-    with pytest.raises(TypeError):
-        pct_list_to_int_list(None)
+    with pytest.raises(TypeError, match="pct_list must be a sequence"):
+        pct_list_to_int_list(None, 100)
