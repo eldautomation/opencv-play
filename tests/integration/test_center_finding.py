@@ -92,11 +92,12 @@ def test_center_finding_generates_debug_outputs(tmp_path: Path) -> None:
 
         debug_prefix = str(prefix_out / f"debug-{i}")
 
-        position, angles = find_cross_center(
+        position, angles,overlay,q_ratio_list = find_cross_center(
             image=img,
             crop_center=(cx_px[i - 1], cy_px[i - 1]),
             crop_size=(x_crop_px[i - 1], y_crop_px[i - 1]),
             roi_size=(500, 20),
+            q_limit=0.5,
             debug=True,
             debug_prefix=debug_prefix,
         )
