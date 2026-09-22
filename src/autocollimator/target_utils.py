@@ -30,6 +30,9 @@ from typing import Iterable, Sequence
 
 LOGGER = logging.getLogger(__name__)
 
+# Order of the ROIs measured by find_cross_center (and of its q_ratio_list).
+ROI_NAMES: tuple[str, str, str, str] = ("top", "bottom", "right", "left")
+
 
 # ----------------------------
 # Filesystem helpers
@@ -1108,9 +1111,15 @@ def find_cross_center(
     slant: bool = False,
     debug: bool = False,
     debug_prefix: str = "dbg",
-) -> tuple[tuple[float, float], tuple[float, float]]:
+) -> tuple[tuple[float, float] | None, tuple[float, float] | None, np.ndarray, list[float]]:
     """
     Find the center of a crosshair and estimate tilt angles.
+
+    Returns
+    -------
+    (center, angles, overlay, q_ratio_list)
+        ``center`` and ``angles`` are None if any ROI fails the quality check.
+        ``q_ratio_list`` holds one RSS ratio per ROI, in ``ROI_NAMES`` order.
 
     Notes
     -----
@@ -1179,7 +1188,7 @@ def find_cross_center(
         "bottom": (cx_crop, cy1 - 1),
         "right": (cx1 - 1, cy_crop),
         "left": (cx0, cy_crop),
-    }
+    }  # keys in ROI_NAMES order
 
     centers_measured: dict[str, tuple[float, float]] = {}
 
@@ -1270,7 +1279,7 @@ def find_cross_center(
             # pos_x is along original y because of transpose
             measured = (float(x0) + (roi0.shape[1] / 2.0), float(y0) + pos_x)
 
-        q_ratio_list.append(float(round(q_ratio,3)))
+        q_ratio_list.append(float(q_ratio))
         centers_measured[name] = measured
 
         if debug:
@@ -1285,7 +1294,7 @@ def find_cross_center(
 
     if measure_fail: 
         LOGGER.warning(f"Quality too low for reliable center finding: - No center computed")
-        return (None,None), (None,None),overlay,q_ratio_list
+        return None, None, overlay, q_ratio_list
 
     # Combine centers
     top = centers_measured["top"]

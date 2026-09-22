@@ -24,6 +24,12 @@ def _require_str(name: str, v) -> str:
     return v
 
 
+def _opt_float(name: str, v) -> Optional[float]:
+    if v is None:
+        return None
+    return _require_float(name, v)
+
+
 def _opt_float_from_key(d: dict, key: str, name: str) -> Optional[float]:
     # TOML has no null; treat missing key as None.
     if key not in d:
@@ -196,10 +202,11 @@ class QualityLimits:
 
 @dataclass(frozen=True)
 class MeasuredValues:
-    center_position_x: float
-    center_position_y: float
-    measured_angle_a0: float
-    measured_angle_a1: float
+    # Position and angles are None only when success is False.
+    center_position_x: Optional[float]
+    center_position_y: Optional[float]
+    measured_angle_a0: Optional[float]
+    measured_angle_a1: Optional[float]
     rss_ratio_r0: float
     rss_ratio_r1: float
     rss_ratio_r2: float
@@ -216,13 +223,23 @@ class MeasuredValues:
     success: bool
     message: str
 
+    def __post_init__(self) -> None:
+        if self.success:
+            missing = [
+                name
+                for name in ("center_position_x", "center_position_y", "measured_angle_a0", "measured_angle_a1")
+                if getattr(self, name) is None
+            ]
+            if missing:
+                raise ValueError(f"measured_values: {', '.join(missing)} cannot be None when success is True")
+
     @staticmethod
     def from_dict(d: dict) -> "MeasuredValues":
         return MeasuredValues(
-            center_position_x=_require_float("measured_values.center_position_x", d["center_position_x"]),
-            center_position_y=_require_float("measured_values.center_position_y", d["center_position_y"]),
-            measured_angle_a0=_require_float("measured_values.measured_angle_a0", d["measured_angle_a0"]),
-            measured_angle_a1=_require_float("measured_values.measured_angle_a1", d["measured_angle_a1"]),
+            center_position_x=_opt_float("measured_values.center_position_x", d["center_position_x"]),
+            center_position_y=_opt_float("measured_values.center_position_y", d["center_position_y"]),
+            measured_angle_a0=_opt_float("measured_values.measured_angle_a0", d["measured_angle_a0"]),
+            measured_angle_a1=_opt_float("measured_values.measured_angle_a1", d["measured_angle_a1"]),
             rss_ratio_r0=_require_float("measured_values.rss_ratio_r0", d["rss_ratio_r0"]),
             rss_ratio_r1=_require_float("measured_values.rss_ratio_r1", d["rss_ratio_r1"]),
             rss_ratio_r2=_require_float("measured_values.rss_ratio_r2", d["rss_ratio_r2"]),

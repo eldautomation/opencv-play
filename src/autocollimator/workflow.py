@@ -22,9 +22,10 @@ from autocollimator.config.models import (
 )
 
 from autocollimator.target_utils import(
+    ROI_NAMES,
     find_cross_center,
     image_md5
-) 
+)
 
 if TYPE_CHECKING:
     from autocollimator.app import AutocollimatorApp
@@ -98,6 +99,19 @@ def _default_crop_from_image(image: np.ndarray) -> tuple[tuple[int, int], tuple[
     crop_size = ( int(crop_size[0]) , int(crop_size[1]) )
 
     return crop_center, crop_size
+
+
+def _quality_failure_message(q_ratio_list: list[float], q_limit: float) -> str:
+    """Describe which ROIs failed the RSS quality check (same test as sdrm_2: ratio > limit)."""
+    failed = [
+        f"{name} (rss_ratio {q:.3f} > limit {q_limit:.3f})"
+        for name, q in zip(ROI_NAMES, q_ratio_list)
+        if q > q_limit
+    ]
+    if failed:
+        return "Center could not be determined: quality check failed for ROI " + ", ".join(failed)
+    ratios = ", ".join(f"{name} {q:.3f}" for name, q in zip(ROI_NAMES, q_ratio_list))
+    return f"Center could not be determined (rss_ratio limit {q_limit:.3f}; ratios: {ratios})"
 
 
             # app=self,
@@ -231,7 +245,11 @@ def run_center_finding_on_image(
     )
 
     success = position is not None
-    message = "Center found" if success else "Center could not be determined"
+    if success:
+        message = "Center found"
+    else:
+        message = _quality_failure_message(q_ratio_list, qls.rss_ratio)
+        LOGGER.warning(message)
 
     LOGGER.info(
         "Center-finding result success=%s position=%s angles=%s",
@@ -245,10 +263,10 @@ def run_center_finding_on_image(
     image_hash = image_md5(image)
 
     measured_values = MeasuredValues(
-        center_position_x = position[0],
-        center_position_y = position[1],
-        measured_angle_a0 = angles[0],
-        measured_angle_a1 = angles[1],
+        center_position_x = position[0] if success else None,
+        center_position_y = position[1] if success else None,
+        measured_angle_a0 = angles[0] if success else None,
+        measured_angle_a1 = angles[1] if success else None,
         rss_ratio_r0 = q_ratio_list[0],
         rss_ratio_r1 = q_ratio_list[1],
         rss_ratio_r2 = q_ratio_list[2],
