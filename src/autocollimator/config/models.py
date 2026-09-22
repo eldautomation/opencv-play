@@ -43,6 +43,13 @@ def _require_bool(name: str, v) -> bool:
     return v
 
 
+def _require_subpixel_neighbors(name: str, v) -> int:
+    # Same rule as target_utils.sdrm_2: an int in 1..3, ValueError otherwise.
+    if isinstance(v, bool) or not isinstance(v, int) or not 1 <= v <= 3:
+        raise ValueError(f"{name} must be an int in 1..3, got {v!r}")
+    return v
+
+
 @dataclass(frozen=True)
 class ImageSensor:
     id: str
@@ -161,7 +168,14 @@ class MeasurementParameters:
     crop_size_y: int
     roi_size_x: int
     roi_size_y: int
-    
+    # Optional in TOML; defaults keep the original integer SDRM centering.
+    subpixel: bool = False
+    subpixel_neighbors: int = 2
+
+    def __post_init__(self) -> None:
+        _require_bool("measurement_parameters.subpixel", self.subpixel)
+        _require_subpixel_neighbors("measurement_parameters.subpixel_neighbors", self.subpixel_neighbors)
+
     @staticmethod
     def from_dict(d: dict) -> "MeasurementParameters":
         return MeasurementParameters(
@@ -173,6 +187,10 @@ class MeasurementParameters:
             crop_size_y=_require_int("measurement_parameters.crop_size_y", d["crop_size_y"]),
             roi_size_x=_require_int("measurement_parameters.roi_size_x", d["roi_size_x"]),
             roi_size_y=_require_int("measurement_parameters.roi_size_y", d["roi_size_y"]),
+            subpixel=_require_bool("measurement_parameters.subpixel", d.get("subpixel", False)),
+            subpixel_neighbors=_require_subpixel_neighbors(
+                "measurement_parameters.subpixel_neighbors", d.get("subpixel_neighbors", 2)
+            ),
         )
 
 

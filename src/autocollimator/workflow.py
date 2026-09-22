@@ -227,10 +227,13 @@ def run_center_finding_on_image(
         raise ValueError(f"crop_size must contain positive integers, got {crop_size}")
 
     LOGGER.info(
-        "Running center-finding workflow with crop_center=%s crop_size=%s roi_size=%s debug=%s",
+        "Running center-finding workflow with crop_center=%s crop_size=%s roi_size=%s "
+        "subpixel=%s subpixel_neighbors=%s debug=%s",
         crop_center,
         crop_size,
         roi_size,
+        mps.subpixel,
+        mps.subpixel_neighbors,
         debug,
     )
 
@@ -240,6 +243,8 @@ def run_center_finding_on_image(
         crop_size=crop_size,
         roi_size=roi_size,
         q_limit=qls.rss_ratio,
+        subpixel=mps.subpixel,
+        subpixel_neighbors=mps.subpixel_neighbors,
         debug=debug,
         debug_prefix=debug_prefix_str if debug_prefix_str is not None else "",
     )

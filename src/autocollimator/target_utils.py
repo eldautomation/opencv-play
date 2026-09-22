@@ -753,7 +753,10 @@ def sdrm_2(
     q_limit:float,
     debug: bool = True,
     debug_prefix: str = "./test_out/test-",
-) -> int:
+    *,
+    subpixel: bool = False,
+    subpixel_neighbors: int = 2,
+) -> tuple[int | float | None, float]:
     """
     Symmetric Difference RMS Minimum (SDRM) center offset estimator for 1D signals.
 
@@ -762,6 +765,14 @@ def sdrm_2(
     - Pad both original and reversed signals with a baseline value (mean)
     - For each offset in [-search_size, +search_size], compute RSS between padded arrays
     - Return the offset (from center) that minimizes RSS
+
+    With ``subpixel=True``, the integer minimum is refined by a least-squares quadratic fit
+    (``numpy.polyfit``, degree 2) to the sum of squared differences (RSS**2) at the minimum
+    index m and ``subpixel_neighbors`` points on each side. The vertex offset is added to the
+    integer offset. With ``subpixel_neighbors=1`` this equals the 3-point parabola
+    ``0.5*(a - c)/(a - 2b + c)``. The integer minimum is used instead when the fit window
+    would extend past the search range or the fitted curvature is not positive, and the
+    vertex offset is clamped to +/-1 px.
 
     Parameters
     ----------
@@ -775,11 +786,22 @@ def sdrm_2(
         If True, write debug plots and print key diagnostics.
     debug_prefix:
         File prefix for debug plot outputs.
+    subpixel:
+        If True, refine the offset to sub-pixel precision (see above). Default False.
+    subpixel_neighbors:
+        Points on each side of the minimum used in the quadratic fit; int in 1..3.
 
     Returns
     -------
-    peak_from_center:
-        Integer offset (negative/positive) from center pixel that minimizes RSS.
+    (peak_from_center, r1):
+        ``peak_from_center`` is the offset (negative/positive) from the center pixel that
+        minimizes RSS: an int when ``subpixel`` is False, a float when True, and None when
+        the quality ratio exceeds ``q_limit``. ``r1`` is min(RSS) / mean(RSS).
+
+    Raises
+    ------
+    ValueError
+        If ``subpixel_neighbors`` is not an int in 1..3.
     """
     # ----------------------------
     # Type + shape checks
@@ -810,6 +832,15 @@ def sdrm_2(
     if not 0 < q_limit < 1:
         raise ValueError(f"q_limit must be between 0 and 1, got {q_limit}")
 
+    if not isinstance(subpixel, (bool, np.bool_)):
+        raise TypeError(f"subpixel must be bool, got {type(subpixel).__name__}")
+    if (
+        isinstance(subpixel_neighbors, (bool, np.bool_))
+        or not isinstance(subpixel_neighbors, (int, np.integer))
+        or not 1 <= subpixel_neighbors <= 3
+    ):
+        raise ValueError(f"subpixel_neighbors must be an int in 1..3, got {subpixel_neighbors!r}")
+
     # ----------------------------
     # Core algorithm (kept same)
     # ----------------------------
@@ -825,6 +856,7 @@ def sdrm_2(
     rss_by_i = []        # (i, rss)
     rss_by_x = []        # (indices[i], rss)  NOTE: indices[i] uses i in [0..2*search_size]
     rss_by_k = []        # (k, rss) where k is offset from center: [-search_size .. +search_size]
+    ssd_by_i = []        # rss**2 (sum of squared differences), indexed by i
 
     last_padded_values = None
     last_flipped_values = None
@@ -848,9 +880,11 @@ def sdrm_2(
         )
 
         diff = padded_values - flipped_values
-        rss = math.sqrt(float(np.sum(diff * diff)))
+        ssd = float(np.sum(diff * diff))
+        rss = math.sqrt(ssd)
 
         rss_by_i.append((i, rss))
+        ssd_by_i.append(ssd)
 
         # Preserve the original behavior: this indexing assumes n is large enough
         # for indices[i] when i <= 2*search_size. If not, we fail fast with a clear message.
@@ -960,8 +994,37 @@ def sdrm_2(
     peak_from_center = int(min_k[0])
     if r1 > q_limit:
         peak_from_center = None
+    elif subpixel:
+        peak_from_center = _subpixel_offset(ssd_by_i, int(min_i[0]), peak_from_center, subpixel_neighbors)
 
     return peak_from_center, r1
+
+
+def _subpixel_offset(ssd: list[float], m: int, k_m: int, neighbors: int) -> float:
+    """
+    Refine the integer SDRM minimum ``k_m`` (at index ``m`` of ``ssd``) with a least-squares
+    quadratic fit over ``m - neighbors .. m + neighbors``. See ``sdrm_2``.
+    """
+    if m - neighbors < 0 or m + neighbors > len(ssd) - 1:
+        LOGGER.debug(
+            "SDRM subpixel: fit window m=%d +/-%d exceeds search range [0, %d]; using integer offset %d",
+            m, neighbors, len(ssd) - 1, k_m,
+        )
+        return float(k_m)
+
+    x = np.arange(-neighbors, neighbors + 1, dtype=np.float64)
+    y = np.asarray(ssd[m - neighbors : m + neighbors + 1], dtype=np.float64)
+    a, b, _c = np.polyfit(x, y, 2)
+    if not a > 0:
+        LOGGER.debug("SDRM subpixel: fitted curvature %.6g is not positive; using integer offset %d", a, k_m)
+        return float(k_m)
+
+    offset = -b / (2.0 * a)
+    if abs(offset) > 1.0:
+        clamped = math.copysign(1.0, offset)
+        LOGGER.debug("SDRM subpixel: vertex offset %.6g clamped to %+.0f px", offset, clamped)
+        offset = clamped
+    return float(k_m + offset)
 
 def find_center_pixel(
     image: np.ndarray,
@@ -972,6 +1035,8 @@ def find_center_pixel(
     search_method: str = "sdrm",
     debug: bool = False,
     debug_prefix: str = "dbg",
+    subpixel: bool = False,
+    subpixel_neighbors: int = 2,
 ) -> tuple[float, float]:
     """
     Estimate the center position of a 1D intensity distribution along the x-axis of a narrow strip image.
@@ -990,6 +1055,8 @@ def find_center_pixel(
         If True, emit debug logging and optionally write plots.
     debug_prefix:
         Prefix for debug artifacts (filenames).
+    subpixel, subpixel_neighbors:
+        Passed to ``sdrm_2`` (sdrm method only): refine the offset to sub-pixel precision.
 
     Returns
     -------
@@ -1052,7 +1119,15 @@ def find_center_pixel(
             # Work on a symmetric chunk around the center to make SDRM meaningful
             chunk = profile[center_in_window - max_off : center_in_window + max_off + 1]
             # best_kk = sdrm(chunk,max_off,debug = True, debug_prefix = f"{debug_prefix}")
-            best_k,q_ratio = sdrm_2(chunk,max_off,q_limit=q_limit,debug = debug, debug_prefix = f"{debug_prefix}")
+            best_k,q_ratio = sdrm_2(
+                chunk,
+                max_off,
+                q_limit=q_limit,
+                debug=debug,
+                debug_prefix=f"{debug_prefix}",
+                subpixel=subpixel,
+                subpixel_neighbors=subpixel_neighbors,
+            )
             if best_k == None:
                 return None,q_ratio
             pos_x = float(window_center + best_k)
@@ -1111,9 +1186,16 @@ def find_cross_center(
     slant: bool = False,
     debug: bool = False,
     debug_prefix: str = "dbg",
+    subpixel: bool = False,
+    subpixel_neighbors: int = 2,
 ) -> tuple[tuple[float, float] | None, tuple[float, float] | None, np.ndarray, list[float]]:
     """
     Find the center of a crosshair and estimate tilt angles.
+
+    Parameters
+    ----------
+    subpixel, subpixel_neighbors:
+        Passed to ``sdrm_2`` for each ROI. Off by default (integer SDRM offsets).
 
     Returns
     -------
@@ -1231,6 +1313,8 @@ def find_cross_center(
                 q_limit=q_limit,
                 search_method="sdrm",
                 debug=False,
+                subpixel=subpixel,
+                subpixel_neighbors=subpixel_neighbors,
                 debug_prefix=f"{debug_prefix}_{name}",
             )
 
@@ -1268,6 +1352,8 @@ def find_cross_center(
                 q_limit=q_limit,
                 search_method="sdrm",
                 debug=False,
+                subpixel=subpixel,
+                subpixel_neighbors=subpixel_neighbors,
                 debug_prefix=f"{debug_prefix}_{name}",
             )
 

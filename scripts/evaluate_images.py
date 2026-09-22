@@ -8,6 +8,9 @@ Usage (from the project root, with .venv active):
 Try a different crop box without editing the config files:
     python scripts/evaluate_images.py --crop-center 960 540 --crop-size 1400 900
 
+Turn on sub-pixel centering (R2) without editing the config files:
+    python scripts/evaluate_images.py --subpixel --subpixel-neighbors 2
+
 Open the report in your Windows browser:
     explorer.exe "$(wslpath -w outputs/evaluation/latest/index.html)"
 
@@ -71,8 +74,9 @@ def evaluate(image_dir: Path, config_dir: Path, run_dir: Path, overrides: dict) 
         apply_overrides(app, overrides)
         mp = app.get_measurement_parameters()
         logging.getLogger(__name__).warning(
-            "Using crop_center=(%d, %d) crop_size=(%d, %d) roi_size=(%d, %d)",
+            "Using crop_center=(%d, %d) crop_size=(%d, %d) roi_size=(%d, %d) subpixel=%s subpixel_neighbors=%d",
             mp.crop_center_x, mp.crop_center_y, mp.crop_size_x, mp.crop_size_y, mp.roi_size_x, mp.roi_size_y,
+            mp.subpixel, mp.subpixel_neighbors,
         )
         sensor = app.get_image_sensor()
         for path in images:
@@ -206,6 +210,10 @@ def main() -> int:
                     help="Crop box width and height in pixels")
     ap.add_argument("--roi-thickness", type=int, metavar="T",
                     help="Thickness of the four ROI strips in pixels (roi_size_y)")
+    ap.add_argument("--subpixel", action="store_true",
+                    help="Refine SDRM offsets to sub-pixel precision (measurement_parameters.subpixel)")
+    ap.add_argument("--subpixel-neighbors", type=int, metavar="N",
+                    help="Points on each side of the minimum for the sub-pixel fit, 1-3 (used with --subpixel)")
     args = ap.parse_args()
 
     overrides: dict = {}
@@ -215,6 +223,10 @@ def main() -> int:
         overrides.update(crop_size_x=args.crop_size[0], crop_size_y=args.crop_size[1])
     if args.roi_thickness:
         overrides.update(roi_size_y=args.roi_thickness)
+    if args.subpixel:
+        overrides.update(subpixel=True)
+    if args.subpixel_neighbors is not None:
+        overrides.update(subpixel_neighbors=args.subpixel_neighbors)
 
     logging.basicConfig(level=logging.ERROR)
     logging.getLogger(__name__).setLevel(logging.WARNING)

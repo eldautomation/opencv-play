@@ -42,7 +42,7 @@ def reference(default_params):
     img = cv2.imread(str(img_path))
     if img is None:
         pytest.fail(f"Cannot read image: {img_path}")
-    position, _angles, _overlay, q_ratios = find_cross_center(image=img, **default_params)
+    position, _angles, _overlay, q_ratios = find_cross_center(image=img, subpixel=True, **default_params)
     if position is None or position[0] is None:
         pytest.fail(f"Reference measurement on blob-22.jpg failed (q_ratios={q_ratios})")
     return img, position
@@ -56,7 +56,7 @@ def test_subpixel_shift_is_tracked(shift, default_params, reference) -> None:
     m = np.float32([[1, 0, shift], [0, 1, shift]])
     shifted = cv2.warpAffine(img, m, (w, h), flags=cv2.INTER_CUBIC)
 
-    position, _angles, _overlay, q_ratios = find_cross_center(image=shifted, **default_params)
+    position, _angles, _overlay, q_ratios = find_cross_center(image=shifted, subpixel=True, **default_params)
     assert position is not None and position[0] is not None, (
         f"Measurement failed at shift {shift} px (q_ratios={q_ratios})"
     )
