@@ -4,9 +4,13 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 import os
+import sys
 import yaml
 
-import tomli
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
 import tomli_w
 import cv2
 
@@ -32,7 +36,7 @@ def _load_toml(path: Path) -> dict:
     if not path.exists():
         raise FileNotFoundError(f"Missing config file: {path}")
     with path.open("rb") as f:
-        data = tomli.load(f)
+        data = tomllib.load(f)
     return data or {}
 
 

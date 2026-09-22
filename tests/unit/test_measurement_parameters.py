@@ -1,8 +1,13 @@
+import sys
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
-import tomli
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
 
 from autocollimator.config.models import MeasurementParameters
 from autocollimator.config.store import load_library
@@ -23,7 +28,7 @@ roi_size_y = 20
 
 
 def _load(extra: str = "") -> MeasurementParameters:
-    return MeasurementParameters.from_dict(tomli.loads(BASE_TOML + extra)["measurement_parameters"][0])
+    return MeasurementParameters.from_dict(tomllib.loads(BASE_TOML + extra)["measurement_parameters"][0])
 
 
 @pytest.mark.unit
