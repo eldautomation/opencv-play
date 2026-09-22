@@ -1,0 +1,2 @@
+tests/assets/images/*.png filter=lfs diff=lfs merge=lfs -text
+tests/assets/images/*.jpg filter=lfs diff=lfs merge=lfs -text
