@@ -203,6 +203,42 @@ def test_ghost_below_ambiguity_ratio_is_not_warned() -> None:
 
 
 @pytest.mark.unit
+def test_projection_fallback_when_main_method_fails() -> None:
+    # A bright patch in the top-left corner pulls the full-frame strips (top and left) away
+    # from the crosshair; the validation pass catches that and the projection takes over.
+    center = (1000.0, 700.0)
+    img = render_crosshair(FWHM, TILT_DEG, 0.0, center=center)
+    img[:250, :250] += 120.0
+    result = presearch(img, DEFAULTS, ReticleType.CROSSHAIR)
+    _assert_near(result, center)
+    assert result.method_used == "projection"
+    assert len(result.q_values) == 2 and all(q < DEFAULTS.presearch_q_limit for q in result.q_values)
+    assert any(w.startswith("sdrm_full_frame failed (") and "projection fallback" in w for w in result.warnings)
+    _assert_region_contains(result, center)
+
+
+@pytest.mark.unit
+def test_projection_is_not_used_when_main_method_succeeds(monkeypatch) -> None:
+    def boom(*args, **kwargs):
+        raise AssertionError("projection must not run")
+
+    monkeypatch.setattr(presearch_module, "_projection", boom)
+    result = _run((700.3, 500.7))
+    assert result.success and result.method_used == "sdrm_full_frame"
+
+
+@pytest.mark.unit
+def test_both_methods_failing_names_both_reasons() -> None:
+    # A strong ramp breaks SDRM everywhere, also in the validation pass of the projection.
+    img = render_crosshair(FWHM, TILT_DEG, 0.0, center=(400.0, 300.0))
+    img = img + np.linspace(0, 120, W)[None, :] + np.linspace(0, 120, H)[:, None]
+    result = presearch(img, DEFAULTS, ReticleType.CROSSHAIR)
+    assert result.success is False and result.method_used == "projection"
+    assert result.failure_reason.startswith("sdrm_full_frame: quality check failed for strip"), result.failure_reason
+    assert "; projection: validation failed" in result.failure_reason
+
+
+@pytest.mark.unit
 def test_unsupported_reticle_type_fails_with_reason(monkeypatch) -> None:
     img = render_crosshair(FWHM, 0.0, 0.0)
     result = presearch(img, DEFAULTS, "ring")

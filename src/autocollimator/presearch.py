@@ -19,6 +19,9 @@ Crosshair pre-search, on the image downsampled by ``presearch_downsample``:
    inside the image, a valid region (``recommend_region``), and a validation pass
    (``find_cross_center_detailed`` in the recommended region, same downsampled image) that
    agrees within ``presearch_agreement_px``.
+4. Fallback "projection", only when the main method fails to locate the crosshair (any
+   check except the region size): the strongest projection peak per line, with the line
+   tilt taken from the two image halves; the same checks apply.
 
 All reported positions and sizes are in full-resolution pixels.
 """
@@ -26,19 +29,25 @@ from __future__ import annotations
 
 import logging
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable
 
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
 
-from autocollimator.config.models import PresearchCandidate, PresearchParameters, PresearchResult
+from autocollimator.config.models import (
+    PRESEARCH_LINES,
+    PresearchCandidate,
+    PresearchParameters,
+    PresearchResult,
+)
 from autocollimator.instrument import ReticleType
 from autocollimator.target_utils import (
     ROI_NAMES,
     _fwhm_over_background,
     _half_crossing,
     _roi_point,
+    _sdrm_core,
     ensure_gray_f64,
     find_center_pixel,
     find_cross_center_detailed,
@@ -71,6 +80,10 @@ PRESEARCH_MIN_STRIP_DEPTH_PX = 2
 PRESEARCH_MIN_IMAGE_PX = 16
 # Smallest half-width (downsampled px) of a strip window around the strongest of several candidates.
 PRESEARCH_MIN_WINDOW_PX = 10
+# Failure reason prefix of recommend_region.
+REGION_TOO_SMALL = "region below minimum size"
+# Projection fallback: smallest half-width (downsampled px) of the window rated by SDRM.
+PRESEARCH_PROJECTION_WINDOW_PX = 10
 
 
 @dataclass(frozen=True)
@@ -196,7 +209,7 @@ def recommend_region(
     if size < minimum:
         return RecommendedRegion(
             None, None, False, shrunk,
-            f"region below minimum size ({size} px < {minimum} px for a crosshair at "
+            f"{REGION_TOO_SMALL} ({size} px < {minimum} px for a crosshair at "
             f"({cx:.1f}, {cy:.1f}) in a {w}x{h} image)",
         )
 
@@ -264,6 +277,70 @@ def _sdrm_full_frame(
     return _Estimate("sdrm_full_frame", (_to_full(cx, f), _to_full(cy, f)), tuple(q_values), None)
 
 
+def _line_quality(profile: np.ndarray, position: float, fwhm: float | None) -> float:
+    """
+    SDRM r1 of the background-subtracted ``profile`` in a window of +/-max(4 x FWHM,
+    PRESEARCH_PROJECTION_WINDOW_PX) around ``position`` (clipped symmetrically at the profile
+    ends); NaN when fewer than 3 px fit on one side.
+    """
+    residual = profile - _background(profile)
+    c = int(round(position))
+    half = max(PRESEARCH_PROJECTION_WINDOW_PX, int(math.ceil(4.0 * fwhm)) if fwhm is not None else 0)
+    half = min(half, c, profile.size - 1 - c)
+    if half < 3:
+        return math.nan
+    _offset, r1 = _sdrm_core(residual[c - half : c + half + 1], half // 2)
+    return float(r1)
+
+
+def _half_profile_position(profile: np.ndarray, near: _Peak) -> float:
+    """Position of the line ``near`` in a half-image profile; ``near.position`` when not found there."""
+    tolerance = max(PRESEARCH_MIN_SEPARATION_PX, 2.0 * near.fwhm if near.fwhm is not None else 0.0)
+    found = [p for p in _line_peaks(profile) if abs(p.position - near.position) <= tolerance]
+    return found[0].position if found else near.position
+
+
+def _projection(
+    g: np.ndarray, f: int, params: PresearchParameters, v_peaks: list[_Peak], h_peaks: list[_Peak]
+) -> _Estimate:
+    """
+    Fallback: the strongest line of each projection profile (integer accuracy is enough).
+
+    Line tilt: the vertical line is located in the column profiles of the upper and lower
+    image half, the horizontal line in the row profiles of the left and right half, and the
+    center is the intersection of the two lines through those points (a tilted line only
+    broadens the full-image profile peak, see ``_line_peaks``). Quality per line: SDRM r1 of
+    the full-image profile around the peak (``_line_quality``).
+    """
+    h, w = g.shape
+    v, hz = v_peaks[0], h_peaks[0]
+    q_values = (
+        _line_quality(g.mean(axis=0), v.position, v.fwhm),
+        _line_quality(g.mean(axis=1), hz.position, hz.fwhm),
+    )
+    q_limit = float(params.presearch_q_limit)
+    failed = [
+        f"{line} {'nan (line at the image edge)' if math.isnan(q) else f'{q:.3f}'}"
+        for line, q in zip(PRESEARCH_LINES, q_values)
+        if not q < q_limit
+    ]
+    if failed:
+        return _Estimate(
+            "projection", None, q_values,
+            f"quality check failed for line {', '.join(failed)} (presearch_q_limit {q_limit:.3f})",
+        )
+    mid_y, mid_x = h // 2, w // 2
+    upper = (_half_profile_position(g[:mid_y].mean(axis=0), v), (mid_y - 1) / 2.0)
+    lower = (_half_profile_position(g[mid_y:].mean(axis=0), v), (mid_y + h - 1) / 2.0)
+    left = ((mid_x - 1) / 2.0, _half_profile_position(g[:, :mid_x].mean(axis=1), hz))
+    right = ((mid_x + w - 1) / 2.0, _half_profile_position(g[:, mid_x:].mean(axis=1), hz))
+    try:
+        cx, cy = line_intersection((upper, lower), (left, right))
+    except ValueError as exc:
+        return _Estimate("projection", None, q_values, f"lines do not intersect: {exc}")
+    return _Estimate("projection", (_to_full(cx, f), _to_full(cy, f)), q_values, None)
+
+
 def _validate(
     g: np.ndarray, f: int, params: PresearchParameters, depth: int, region: RecommendedRegion,
     center: tuple[float, float], gray_mode: str,
@@ -276,7 +353,8 @@ def _validate(
         g, crop_center, (size, size), (size, depth), float(params.presearch_q_limit),
         subpixel=True, gray_mode=gray_mode,
     )
-    if result.center is None:
+    # A flat ROI gives q = NaN, which sdrm_2's "q > limit" test lets through; reject it here.
+    if result.center is None or not all(q < params.presearch_q_limit for q in result.q_ratio_list):
         ratios = ", ".join(f"{name} {q:.3f}" for name, q in zip(ROI_NAMES, result.q_ratio_list))
         return f"validation failed: center finding in the recommended region failed the quality check ({ratios})"
     vx, vy = _to_full(result.center[0], f), _to_full(result.center[1], f)
@@ -369,10 +447,28 @@ def _presearch_crosshair(
         noun = "line" if len(missing) == 1 else "lines"
         return _failed(f"{' and '.join(missing)} {noun} not found", warnings=tuple(warnings), **common)
 
-    result = _check(
-        _sdrm_full_frame(g, f, params, depth, v_peaks, h_peaks), g, f, params, depth,
-        (w_full, h_full), line_fwhm_px, gray_mode, dict(common, warnings=tuple(warnings)),
-    )
+    def check(estimate: _Estimate, extra_warnings: tuple[str, ...] = ()) -> PresearchResult:
+        return _check(
+            estimate, g, f, params, depth, (w_full, h_full), line_fwhm_px, gray_mode,
+            dict(common, warnings=tuple(warnings) + extra_warnings),
+        )
+
+    result = check(_sdrm_full_frame(g, f, params, depth, v_peaks, h_peaks))
+    # Fallback only when the main method failed to locate the crosshair; a region below the
+    # minimum size is a property of a correctly found position, not a method failure.
+    if not result.success and not result.failure_reason.startswith(REGION_TOO_SMALL):
+        main_reason = result.failure_reason
+        LOGGER.info("Pre-search sdrm_full_frame failed (%s); trying the projection fallback", main_reason)
+        result = check(
+            _projection(g, f, params, v_peaks, h_peaks),
+            (f"sdrm_full_frame failed ({main_reason}); used the projection fallback",),
+        )
+        if not result.success:
+            result = replace(
+                result,
+                failure_reason=f"sdrm_full_frame: {main_reason}; projection: {result.failure_reason}",
+                warnings=tuple(warnings),
+            )
     LOGGER.info(
         "Pre-search %s: method=%s position=(%s, %s) region center=(%s, %s) size=%s reason=%s",
         "succeeded" if result.success else "failed", result.method_used, result.position_x, result.position_y,
