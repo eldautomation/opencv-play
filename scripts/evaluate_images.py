@@ -18,6 +18,10 @@ Use the two-pass deskew profile (combinable with --subpixel):
 Reduce BGR to the green channel or the per-pixel channel max instead of luma (R18):
     python3 scripts/evaluate_images.py --gray-mode green
 
+Find the crosshair anywhere in the image first (pre-search, R4) and measure in the recommended crop:
+    python3 scripts/evaluate_images.py --presearch-mode every_image
+    python3 scripts/evaluate_images.py --presearch-mode every_image --presearch-downsample 4 --presearch-failure-action fail
+
 Report tilt in arcsec and rotation/orthogonality in degrees (defaults come from main.toml):
     python3 scripts/evaluate_images.py --tilt-unit arcsec --rotation-unit deg
 
@@ -45,6 +49,7 @@ import yaml
 from dataclasses import replace
 
 from autocollimator.app import AutocollimatorApp
+from autocollimator.config.models import PRESEARCH_FAILURE_ACTIONS, PRESEARCH_MODES
 from autocollimator.config.store import ConfigError
 from autocollimator.target_utils import SATURATION_LEVEL, SATURATION_WARN_FRACTION
 from autocollimator.units import AngleUnit, OutputUnits
@@ -84,16 +89,28 @@ def mode_label(mp) -> str:
         window = f">= {mp.fine_window} (adaptive)" if mp.fine_window_mode == "adaptive" else f"{mp.fine_window}"
         label += (f" (step {mp.oversample_step:g}, window {window}, search {mp.refine_search:g},"
                   f" max shift {mp.max_refine_shift:g})")
+    ps = mp.presearch
+    if ps.presearch_mode != "off":
+        label += (f" / presearch {ps.presearch_mode} (downsample {ps.presearch_downsample},"
+                  f" fraction {ps.presearch_crop_fraction:g}, on failure {ps.presearch_failure_action})")
     return label
 
 
 def apply_overrides(app: AutocollimatorApp, overrides: dict) -> None:
-    """Replace the active measurement parameters in memory (config files are not changed)."""
+    """
+    Replace the active measurement parameters in memory (config files are not changed).
+
+    ``overrides["presearch"]``, if present, is a dict of PresearchParameters fields.
+    """
     if not overrides:
         return
     device = app.get_current_config()
     by_id = app.get_library()["measurement_parameters_by_id"]
-    by_id[device.measurement_parameters_id] = replace(app.get_measurement_parameters(), **overrides)
+    mp = app.get_measurement_parameters()
+    fields = {k: v for k, v in overrides.items() if k != "presearch"}
+    if overrides.get("presearch"):
+        fields["presearch"] = replace(mp.presearch, **overrides["presearch"])
+    by_id[device.measurement_parameters_id] = replace(mp, **fields)
 
 
 def evaluate(
@@ -307,6 +324,20 @@ def main() -> int:
                     help="Max pass-2 shift from pass 1 in px before falling back, 0.1-3.0 (deskew only)")
     ap.add_argument("--gray-mode", choices=("luma", "green", "max"),
                     help="How BGR is reduced to one channel (measurement_parameters.gray_mode)")
+    ap.add_argument("--presearch-mode", choices=PRESEARCH_MODES,
+                    help="off: configured crop; every_image: pre-search each image and use its crop; "
+                         "track: previous center, pre-search when needed (measurement_parameters.presearch)")
+    ap.add_argument("--presearch-failure-action", choices=PRESEARCH_FAILURE_ACTIONS,
+                    help="What a measurement does when the pre-search fails")
+    ap.add_argument("--presearch-downsample", type=int, metavar="N", help="Pre-search downsample factor, int >= 1")
+    ap.add_argument("--presearch-crop-fraction", type=float, metavar="F",
+                    help="Recommended crop size as a fraction of min(image width, height), 0.1-1.0")
+    ap.add_argument("--min-crop-size", type=int, metavar="PX", help="Smallest recommended crop size (min_crop_size_px)")
+    ap.add_argument("--presearch-q-limit", type=float, metavar="Q", help="Pre-search RSS-ratio limit, 0 < Q < 1")
+    ap.add_argument("--presearch-agreement", type=float, metavar="PX",
+                    help="Max distance between pre-search and validation center (presearch_agreement_px)")
+    ap.add_argument("--presearch-ambiguity-ratio", type=float, metavar="R",
+                    help="Warn when a second candidate line reaches this fraction of the strongest")
     unit_choices = [u.value for u in AngleUnit]
     ap.add_argument("--tilt-unit", choices=unit_choices,
                     help="Unit for tilt_x / tilt_y (default: device.tilt_unit in main.toml)")
@@ -339,6 +370,22 @@ def main() -> int:
         overrides.update(max_refine_shift=args.max_refine_shift)
     if args.gray_mode:
         overrides.update(gray_mode=args.gray_mode)
+    presearch_overrides = {
+        key: value
+        for key, value in (
+            ("presearch_mode", args.presearch_mode),
+            ("presearch_failure_action", args.presearch_failure_action),
+            ("presearch_downsample", args.presearch_downsample),
+            ("presearch_crop_fraction", args.presearch_crop_fraction),
+            ("min_crop_size_px", args.min_crop_size),
+            ("presearch_q_limit", args.presearch_q_limit),
+            ("presearch_agreement_px", args.presearch_agreement),
+            ("presearch_ambiguity_ratio", args.presearch_ambiguity_ratio),
+        )
+        if value is not None
+    }
+    if presearch_overrides:
+        overrides["presearch"] = presearch_overrides
 
     logging.basicConfig(level=logging.ERROR)
     logging.getLogger(__name__).setLevel(logging.WARNING)

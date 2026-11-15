@@ -8,5 +8,16 @@ crop_size_y = 652
 roi_size_x = 500
 roi_size_y = 20
 
+# Pre-search (R4), optional; without this table the defaults below apply (pre-search off).
+# [measurement_parameters.presearch]
+# presearch_mode = "off"                         # "off" | "every_image" | "track"
+# presearch_failure_action = "use_configured_crop"  # "use_configured_crop" | "fail"
+# presearch_downsample = 2                       # int >= 1
+# presearch_crop_fraction = 0.5                  # 0.1..1.0 of min(image width, height)
+# min_crop_size_px = 240
+# presearch_q_limit = 0.7                        # separate from quality_limits.rss_ratio
+# presearch_agreement_px = 5.0
+# presearch_ambiguity_ratio = 0.8
+
 
 

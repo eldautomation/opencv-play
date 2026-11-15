@@ -1,5 +1,6 @@
+import shutil
 import sys
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import pytest
@@ -9,8 +10,8 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib
 
-from autocollimator.config.models import MeasurementParameters
-from autocollimator.config.store import load_library
+from autocollimator.config.models import MeasurementParameters, PresearchParameters
+from autocollimator.config.store import add_measurement_parameters, load_library
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -212,3 +213,101 @@ def test_measurement_parameters_invalid_fine_window_mode_raises(value):
 def test_measurement_parameters_fine_window_mode_override_is_validated():
     with pytest.raises(ValueError, match="fine_window_mode must be one of"):
         replace(_load(), fine_window_mode="auto")
+
+
+# ---- Pre-search settings (R4) ----
+
+PRESEARCH_DEFAULTS = dict(
+    presearch_mode="off",
+    presearch_failure_action="use_configured_crop",
+    presearch_downsample=2,
+    presearch_crop_fraction=0.5,
+    min_crop_size_px=240,
+    presearch_q_limit=0.7,
+    presearch_agreement_px=5.0,
+    presearch_ambiguity_ratio=0.8,
+)
+
+
+@pytest.mark.unit
+def test_presearch_settings_default_to_off_without_table():
+    mp = _load()
+    assert mp.presearch == PresearchParameters()
+    assert asdict(mp.presearch) == PRESEARCH_DEFAULTS
+
+
+@pytest.mark.unit
+def test_repo_config_library_loads_with_presearch_defaults():
+    lib = load_library(PROJECT_ROOT / "configs")
+    for mp in lib["measurement_parameters"]:
+        assert mp.presearch == PresearchParameters()
+
+
+@pytest.mark.unit
+def test_presearch_settings_from_toml():
+    mp = _load(
+        """
+[measurement_parameters.presearch]
+presearch_mode = "track"
+presearch_failure_action = "fail"
+presearch_downsample = 4
+presearch_crop_fraction = 0.3
+min_crop_size_px = 300
+presearch_q_limit = 0.6
+presearch_agreement_px = 3
+presearch_ambiguity_ratio = 0.9
+"""
+    )
+    assert asdict(mp.presearch) == dict(
+        presearch_mode="track", presearch_failure_action="fail", presearch_downsample=4,
+        presearch_crop_fraction=0.3, min_crop_size_px=300, presearch_q_limit=0.6,
+        presearch_agreement_px=3, presearch_ambiguity_ratio=0.9,
+    )
+    # Partial tables keep the other defaults.
+    mp = _load('\n[measurement_parameters.presearch]\npresearch_mode = "every_image"\n')
+    assert mp.presearch == PresearchParameters(presearch_mode="every_image")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "key, value",
+    [
+        ("presearch_mode", "always"),
+        ("presearch_failure_action", "ignore"),
+        ("presearch_downsample", 0),
+        ("presearch_downsample", 2.0),
+        ("presearch_downsample", True),
+        ("presearch_crop_fraction", 0.05),
+        ("presearch_crop_fraction", 1.2),
+        ("min_crop_size_px", 0),
+        ("min_crop_size_px", 240.0),
+        ("presearch_q_limit", 0.0),
+        ("presearch_q_limit", 1.0),
+        ("presearch_agreement_px", 0.0),
+        ("presearch_agreement_px", "5"),
+        ("presearch_ambiguity_ratio", 0.0),
+        ("presearch_ambiguity_ratio", 1.5),
+    ],
+)
+def test_presearch_invalid_values_raise(key, value):
+    with pytest.raises(ValueError, match=key):
+        PresearchParameters(**{key: value})
+
+
+@pytest.mark.unit
+def test_presearch_table_rejects_unknown_keys_and_non_tables():
+    with pytest.raises(ValueError, match="unknown key"):
+        _load('\n[measurement_parameters.presearch]\npresearch_modus = "off"\n')
+    with pytest.raises(TypeError, match="presearch must be a table"):
+        MeasurementParameters.from_dict({**tomllib.loads(BASE_TOML)["measurement_parameters"][0], "presearch": "off"})
+
+
+@pytest.mark.unit
+def test_presearch_settings_round_trip_through_library_crud(tmp_path):
+    shutil.copytree(PROJECT_ROOT / "configs", tmp_path / "configs")
+    config_dir = tmp_path / "configs"
+    mp = replace(
+        _load(), id="999", presearch=PresearchParameters(presearch_mode="every_image", presearch_downsample=3)
+    )
+    add_measurement_parameters(config_dir, mp)
+    assert load_library(config_dir)["measurement_parameters_by_id"]["999"] == mp

@@ -420,104 +420,6 @@ class Device:
 
 
 
-@dataclass(frozen=True)
-class MeasurementParameters:
-    id:str
-    name:str
-    crop_center_x: int
-    crop_center_y: int
-    crop_size_x: int
-    crop_size_y: int
-    roi_size_x: int
-    roi_size_y: int
-    # Optional in TOML; defaults keep the original integer SDRM centering.
-    subpixel: bool = False
-    subpixel_neighbors: int = 2
-    # Optional in TOML; "average" keeps the original single-pass profile.
-    profile_mode: str = "average"
-    oversample_step: float = 0.1
-    fine_window: int = 40
-    # Optional in TOML; "fixed" uses fine_window as is, "adaptive" grows it to 1.5 x line FWHM.
-    fine_window_mode: str = "fixed"
-    refine_search: float = 1.5
-    max_refine_shift: float = 0.75
-    # Optional in TOML; "luma" keeps the original cv2 grayscale conversion.
-    gray_mode: str = "luma"
-
-    def __post_init__(self) -> None:
-        _require_bool("measurement_parameters.subpixel", self.subpixel)
-        _require_subpixel_neighbors("measurement_parameters.subpixel_neighbors", self.subpixel_neighbors)
-        _require_profile_mode("measurement_parameters.profile_mode", self.profile_mode)
-        _require_oversample_step("measurement_parameters.oversample_step", self.oversample_step)
-        _require_fine_window("measurement_parameters.fine_window", self.fine_window)
-        _require_fine_window_mode("measurement_parameters.fine_window_mode", self.fine_window_mode)
-        _require_refine_search("measurement_parameters.refine_search", self.refine_search)
-        _require_max_refine_shift("measurement_parameters.max_refine_shift", self.max_refine_shift)
-        _require_gray_mode("measurement_parameters.gray_mode", self.gray_mode)
-        if not self.refine_search < self.fine_window:
-            raise ValueError(
-                f"measurement_parameters.refine_search ({self.refine_search}) must be smaller than "
-                f"measurement_parameters.fine_window ({self.fine_window})"
-            )
-
-    @staticmethod
-    def from_dict(d: dict) -> "MeasurementParameters":
-        return MeasurementParameters(
-            id=_require_str("measurement_parameters.id",d["id"]),
-            name=_require_str("measurement_parameters.name",d["name"]),
-            crop_center_x=_require_int("measurement_parameters.crop_center_x", d["crop_center_x"]),
-            crop_center_y=_require_int("measurement_parameters.crop_center_y", d["crop_center_y"]),
-            crop_size_x=_require_int("measurement_parameters.crop_size_x", d["crop_size_x"]),
-            crop_size_y=_require_int("measurement_parameters.crop_size_y", d["crop_size_y"]),
-            roi_size_x=_require_int("measurement_parameters.roi_size_x", d["roi_size_x"]),
-            roi_size_y=_require_int("measurement_parameters.roi_size_y", d["roi_size_y"]),
-            subpixel=_require_bool("measurement_parameters.subpixel", d.get("subpixel", False)),
-            subpixel_neighbors=_require_subpixel_neighbors(
-                "measurement_parameters.subpixel_neighbors", d.get("subpixel_neighbors", 2)
-            ),
-            profile_mode=_require_profile_mode("measurement_parameters.profile_mode", d.get("profile_mode", "average")),
-            oversample_step=_require_oversample_step(
-                "measurement_parameters.oversample_step", d.get("oversample_step", 0.1)
-            ),
-            fine_window=_require_fine_window("measurement_parameters.fine_window", d.get("fine_window", 40)),
-            fine_window_mode=_require_fine_window_mode(
-                "measurement_parameters.fine_window_mode", d.get("fine_window_mode", "fixed")
-            ),
-            refine_search=_require_refine_search(
-                "measurement_parameters.refine_search", d.get("refine_search", 1.5)
-            ),
-            max_refine_shift=_require_max_refine_shift(
-                "measurement_parameters.max_refine_shift", d.get("max_refine_shift", 0.75)
-            ),
-            gray_mode=_require_gray_mode("measurement_parameters.gray_mode", d.get("gray_mode", "luma")),
-        )
-
-
-@dataclass(frozen=True)
-class QualityLimits:
-    id:str
-    name:str
-    rss_ratio: float
-    brightness_ratio: float
-    max_brightness: float
-    min_brightness: float
-    linewidth: float
-    metric_tolerance: float
-
-    @staticmethod
-    def from_dict(d: dict) -> "QualityLimits":
-        return QualityLimits(
-            id=_require_str("quality_limits.id",d["id"]),
-            name=_require_str("quality_limits.name",d["name"]),
-            rss_ratio=_require_float("quality_limits.rss_ratio", d["rss_ratio"]),
-            brightness_ratio=_require_float("quality_limits.brightness_ratio", d["brightness_ratio"]),
-            max_brightness=_require_float("quality_limits.max_brightness", d["max_brightness"]),
-            min_brightness=_require_float("quality_limits.min_brightness", d["min_brightness"]),
-            linewidth=_require_float("quality_limits.linewidth", d["linewidth"]),
-            metric_tolerance=_require_float("quality_limits.metric_tolerance", d["metric_tolerance"]),
-        )
-
-
 # Pre-search (R4): when the measurement runs it, what it does when it fails, how it reports.
 PRESEARCH_MODES = ("off", "every_image", "track")
 PRESEARCH_FAILURE_ACTIONS = ("use_configured_crop", "fail")
@@ -532,6 +434,12 @@ PRESEARCH_CROP_FRACTION_RANGE = (0.1, 1.0)
 def _require_choice(name: str, v, choices: tuple[str, ...]) -> str:
     if v not in choices:
         raise ValueError(f"{name} must be one of {choices}, got {v!r}")
+    return v
+
+
+def _require_table(name: str, v) -> dict:
+    if not isinstance(v, dict):
+        raise TypeError(f"{name} must be a table, got {type(v).__name__}")
     return v
 
 
@@ -595,6 +503,113 @@ class PresearchParameters:
         if unknown:
             raise ValueError(f"measurement_parameters.presearch: unknown key(s) {unknown}")
         return PresearchParameters(**d)
+
+
+@dataclass(frozen=True)
+class MeasurementParameters:
+    id:str
+    name:str
+    crop_center_x: int
+    crop_center_y: int
+    crop_size_x: int
+    crop_size_y: int
+    roi_size_x: int
+    roi_size_y: int
+    # Optional in TOML; defaults keep the original integer SDRM centering.
+    subpixel: bool = False
+    subpixel_neighbors: int = 2
+    # Optional in TOML; "average" keeps the original single-pass profile.
+    profile_mode: str = "average"
+    oversample_step: float = 0.1
+    fine_window: int = 40
+    # Optional in TOML; "fixed" uses fine_window as is, "adaptive" grows it to 1.5 x line FWHM.
+    fine_window_mode: str = "fixed"
+    refine_search: float = 1.5
+    max_refine_shift: float = 0.75
+    # Optional in TOML; "luma" keeps the original cv2 grayscale conversion.
+    gray_mode: str = "luma"
+    # Optional in TOML ([measurement_parameters.presearch]); the defaults keep the pre-search off.
+    presearch: PresearchParameters = field(default_factory=PresearchParameters)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.presearch, PresearchParameters):
+            raise TypeError(
+                f"measurement_parameters.presearch must be PresearchParameters, got {type(self.presearch).__name__}"
+            )
+        _require_bool("measurement_parameters.subpixel", self.subpixel)
+        _require_subpixel_neighbors("measurement_parameters.subpixel_neighbors", self.subpixel_neighbors)
+        _require_profile_mode("measurement_parameters.profile_mode", self.profile_mode)
+        _require_oversample_step("measurement_parameters.oversample_step", self.oversample_step)
+        _require_fine_window("measurement_parameters.fine_window", self.fine_window)
+        _require_fine_window_mode("measurement_parameters.fine_window_mode", self.fine_window_mode)
+        _require_refine_search("measurement_parameters.refine_search", self.refine_search)
+        _require_max_refine_shift("measurement_parameters.max_refine_shift", self.max_refine_shift)
+        _require_gray_mode("measurement_parameters.gray_mode", self.gray_mode)
+        if not self.refine_search < self.fine_window:
+            raise ValueError(
+                f"measurement_parameters.refine_search ({self.refine_search}) must be smaller than "
+                f"measurement_parameters.fine_window ({self.fine_window})"
+            )
+
+    @staticmethod
+    def from_dict(d: dict) -> "MeasurementParameters":
+        return MeasurementParameters(
+            id=_require_str("measurement_parameters.id",d["id"]),
+            name=_require_str("measurement_parameters.name",d["name"]),
+            crop_center_x=_require_int("measurement_parameters.crop_center_x", d["crop_center_x"]),
+            crop_center_y=_require_int("measurement_parameters.crop_center_y", d["crop_center_y"]),
+            crop_size_x=_require_int("measurement_parameters.crop_size_x", d["crop_size_x"]),
+            crop_size_y=_require_int("measurement_parameters.crop_size_y", d["crop_size_y"]),
+            roi_size_x=_require_int("measurement_parameters.roi_size_x", d["roi_size_x"]),
+            roi_size_y=_require_int("measurement_parameters.roi_size_y", d["roi_size_y"]),
+            subpixel=_require_bool("measurement_parameters.subpixel", d.get("subpixel", False)),
+            subpixel_neighbors=_require_subpixel_neighbors(
+                "measurement_parameters.subpixel_neighbors", d.get("subpixel_neighbors", 2)
+            ),
+            profile_mode=_require_profile_mode("measurement_parameters.profile_mode", d.get("profile_mode", "average")),
+            oversample_step=_require_oversample_step(
+                "measurement_parameters.oversample_step", d.get("oversample_step", 0.1)
+            ),
+            fine_window=_require_fine_window("measurement_parameters.fine_window", d.get("fine_window", 40)),
+            fine_window_mode=_require_fine_window_mode(
+                "measurement_parameters.fine_window_mode", d.get("fine_window_mode", "fixed")
+            ),
+            refine_search=_require_refine_search(
+                "measurement_parameters.refine_search", d.get("refine_search", 1.5)
+            ),
+            max_refine_shift=_require_max_refine_shift(
+                "measurement_parameters.max_refine_shift", d.get("max_refine_shift", 0.75)
+            ),
+            gray_mode=_require_gray_mode("measurement_parameters.gray_mode", d.get("gray_mode", "luma")),
+            presearch=PresearchParameters.from_dict(
+                _require_table("measurement_parameters.presearch", d.get("presearch", {}))
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class QualityLimits:
+    id:str
+    name:str
+    rss_ratio: float
+    brightness_ratio: float
+    max_brightness: float
+    min_brightness: float
+    linewidth: float
+    metric_tolerance: float
+
+    @staticmethod
+    def from_dict(d: dict) -> "QualityLimits":
+        return QualityLimits(
+            id=_require_str("quality_limits.id",d["id"]),
+            name=_require_str("quality_limits.name",d["name"]),
+            rss_ratio=_require_float("quality_limits.rss_ratio", d["rss_ratio"]),
+            brightness_ratio=_require_float("quality_limits.brightness_ratio", d["brightness_ratio"]),
+            max_brightness=_require_float("quality_limits.max_brightness", d["max_brightness"]),
+            min_brightness=_require_float("quality_limits.min_brightness", d["min_brightness"]),
+            linewidth=_require_float("quality_limits.linewidth", d["linewidth"]),
+            metric_tolerance=_require_float("quality_limits.metric_tolerance", d["metric_tolerance"]),
+        )
 
 
 @dataclass(frozen=True)
