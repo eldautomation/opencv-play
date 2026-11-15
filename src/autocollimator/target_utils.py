@@ -803,7 +803,8 @@ def sdrm_2(
     (peak_from_center, r1):
         ``peak_from_center`` is the offset (negative/positive) from the center sample that
         minimizes RSS: an int when ``subpixel`` is False, a float when True, and None when
-        the quality ratio exceeds ``q_limit``. ``r1`` is min(RSS) / mean(RSS).
+        the quality ratio exceeds ``q_limit`` or is not finite (NaN for a flat profile).
+        ``r1`` is min(RSS) / mean(RSS).
 
     Raises
     ------
@@ -823,6 +824,10 @@ def sdrm_2(
         subpixel=subpixel,
         subpixel_neighbors=subpixel_neighbors,
     )
+    if not math.isfinite(r1):
+        # A flat profile gives 0/0 = NaN; NaN > q_limit is False, so check explicitly (R21).
+        LOGGER.debug("SDRM: quality ratio %s is not finite (flat profile)", r1)
+        return None, r1
     if r1 > q_limit:
         return None, r1
     return peak_from_center, r1
@@ -1590,6 +1595,13 @@ def _roi_point(name: str, x0: int, y0: int, roi: np.ndarray, pos: float) -> tupl
     return (float(x0) + (roi.shape[0] / 2.0), float(y0) + pos)
 
 
+def _roi_quality_failure_text(name: str, q: float) -> str:
+    """Log text for an ROI that failed the pass-1 quality check (non-finite q: R21)."""
+    if not math.isfinite(q):
+        return f"ROI {name}: quality ratio not finite (flat profile)"
+    return f"For ROI {name}, Quality too low for reliable center finding: {q}"
+
+
 def find_cross_center(
     image: np.ndarray,
     crop_center: tuple[int, int],
@@ -1838,7 +1850,7 @@ def find_cross_center_detailed(
 
             # LOGGER.debug(f"Quality ratio of center finding: {q_ratio}")
             if pos_x == None:
-                LOGGER.warning(f"For ROI {name}, Quality too low for reliable center finding: {q_ratio}")
+                LOGGER.warning(_roi_quality_failure_text(name, q_ratio))
                 measure_fail = True
                 pos_x=0 # Note - will not be used for computation, because "measure_fail" should trigger
 
@@ -1874,7 +1886,7 @@ def find_cross_center_detailed(
             )
 
             if pos_x == None:
-                LOGGER.warning(f"For ROI {name}, Quality too low for reliable center finding: {q_ratio}")
+                LOGGER.warning(_roi_quality_failure_text(name, q_ratio))
                 measure_fail = True
                 pos_x=0 # Note - will not be used for computation, because "measure_fail" should trigger
 

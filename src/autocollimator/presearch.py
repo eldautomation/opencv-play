@@ -353,7 +353,7 @@ def _validate(
         g, crop_center, (size, size), (size, depth), float(params.presearch_q_limit),
         subpixel=True, gray_mode=gray_mode,
     )
-    # A flat ROI gives q = NaN, which sdrm_2's "q > limit" test lets through; reject it here.
+    # A flat ROI gives q = NaN; sdrm_2 rejects it since R21, this check stays as a guard.
     if result.center is None or not all(q < params.presearch_q_limit for q in result.q_ratio_list):
         ratios = ", ".join(f"{name} {q:.3f}" for name, q in zip(ROI_NAMES, result.q_ratio_list))
         return f"validation failed: center finding in the recommended region failed the quality check ({ratios})"

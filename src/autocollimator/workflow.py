@@ -116,14 +116,26 @@ def _default_crop_from_image(image: np.ndarray) -> tuple[tuple[int, int], tuple[
 
 
 def _quality_failure_message(q_ratio_list: list[float], q_limit: float) -> str:
-    """Describe which ROIs failed the RSS quality check (same test as sdrm_2: ratio > limit)."""
+    """
+    Describe which ROIs failed the RSS quality check (same test as sdrm_2: ratio not finite
+    or ratio > limit).
+    """
+    not_finite = [
+        f"ROI {name}: quality ratio not finite (flat profile)"
+        for name, q in zip(ROI_NAMES, q_ratio_list)
+        if not math.isfinite(q)
+    ]
     failed = [
         f"{name} (rss_ratio {q:.3f} > limit {q_limit:.3f})"
         for name, q in zip(ROI_NAMES, q_ratio_list)
-        if q > q_limit
+        if math.isfinite(q) and q > q_limit
     ]
-    if failed:
-        return "Center could not be determined: quality check failed for ROI " + ", ".join(failed)
+    if not_finite or failed:
+        parts = []
+        if failed:
+            parts.append("quality check failed for ROI " + ", ".join(failed))
+        parts.extend(not_finite)
+        return "Center could not be determined: " + "; ".join(parts)
     ratios = ", ".join(f"{name} {q:.3f}" for name, q in zip(ROI_NAMES, q_ratio_list))
     return f"Center could not be determined (rss_ratio limit {q_limit:.3f}; ratios: {ratios})"
 
