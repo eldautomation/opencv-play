@@ -15,6 +15,9 @@ Use the two-pass deskew profile (combinable with --subpixel):
     python3 scripts/evaluate_images.py --profile-mode deskew --oversample-step 0.1 --fine-window 40 --subpixel
     python3 scripts/evaluate_images.py --profile-mode deskew --subpixel --refine-search 2.5
 
+Reduce BGR to the green channel or the per-pixel channel max instead of luma (R18):
+    python3 scripts/evaluate_images.py --gray-mode green
+
 Open the report in your Windows browser:
     explorer.exe "$(wslpath -w outputs/evaluation/latest/index.html)"
 
@@ -60,7 +63,7 @@ def fmt(v, digits: int = 2) -> str:
 def mode_label(mp) -> str:
     """Profile mode and SDRM read-out, e.g. 'deskew / subpixel n=2' or 'average / integer'."""
     readout = f"subpixel n={mp.subpixel_neighbors}" if mp.subpixel else "integer"
-    label = f"{mp.profile_mode} / {readout}"
+    label = f"{mp.profile_mode} / {readout} / gray {mp.gray_mode}"
     if mp.profile_mode == "deskew":
         label += (f" (step {mp.oversample_step:g}, window {mp.fine_window}, search {mp.refine_search:g},"
                   f" max shift {mp.max_refine_shift:g})")
@@ -91,10 +94,10 @@ def evaluate(image_dir: Path, config_dir: Path, run_dir: Path, overrides: dict) 
         mp = app.get_measurement_parameters()
         logging.getLogger(__name__).warning(
             "Using crop_center=(%d, %d) crop_size=(%d, %d) roi_size=(%d, %d) subpixel=%s subpixel_neighbors=%d "
-            "profile_mode=%s oversample_step=%g fine_window=%d refine_search=%g max_refine_shift=%g",
+            "profile_mode=%s oversample_step=%g fine_window=%d refine_search=%g max_refine_shift=%g gray_mode=%s",
             mp.crop_center_x, mp.crop_center_y, mp.crop_size_x, mp.crop_size_y, mp.roi_size_x, mp.roi_size_y,
             mp.subpixel, mp.subpixel_neighbors, mp.profile_mode, mp.oversample_step, mp.fine_window,
-            mp.refine_search, mp.max_refine_shift,
+            mp.refine_search, mp.max_refine_shift, mp.gray_mode,
         )
         mode = mode_label(mp)
         sensor = app.get_image_sensor()
@@ -247,6 +250,8 @@ def main() -> int:
                     help="Pass-2 search half-range in px, 0.5-3.0 (used with --profile-mode deskew)")
     ap.add_argument("--max-refine-shift", type=float, metavar="PX",
                     help="Max pass-2 shift from pass 1 in px before falling back, 0.1-3.0 (deskew only)")
+    ap.add_argument("--gray-mode", choices=("luma", "green", "max"),
+                    help="How BGR is reduced to one channel (measurement_parameters.gray_mode)")
     args = ap.parse_args()
 
     overrides: dict = {}
@@ -270,6 +275,8 @@ def main() -> int:
         overrides.update(refine_search=args.refine_search)
     if args.max_refine_shift is not None:
         overrides.update(max_refine_shift=args.max_refine_shift)
+    if args.gray_mode:
+        overrides.update(gray_mode=args.gray_mode)
 
     logging.basicConfig(level=logging.ERROR)
     logging.getLogger(__name__).setLevel(logging.WARNING)

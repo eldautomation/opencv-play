@@ -168,3 +168,25 @@ def test_measurement_parameters_max_refine_shift_defaults_and_loads():
 def test_measurement_parameters_invalid_max_refine_shift_raises(value):
     with pytest.raises(ValueError, match="max_refine_shift must be a number in 0.1..3.0"):
         _load(f"max_refine_shift = {value}\n")
+
+
+@pytest.mark.unit
+def test_measurement_parameters_gray_mode_defaults_and_loads():
+    assert _load().gray_mode == "luma"
+    for mp in load_library(PROJECT_ROOT / "configs")["measurement_parameters_by_id"].values():
+        assert mp.gray_mode == "luma"
+    assert _load('gray_mode = "green"\n').gray_mode == "green"
+    assert _load('gray_mode = "max"\n').gray_mode == "max"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("value", ['"Luma"', '"gray"', '""', "1", "true"])
+def test_measurement_parameters_invalid_gray_mode_raises(value):
+    with pytest.raises(ValueError, match="gray_mode must be one of"):
+        _load(f"gray_mode = {value}\n")
+
+
+@pytest.mark.unit
+def test_measurement_parameters_gray_mode_override_is_validated():
+    with pytest.raises(ValueError, match="gray_mode must be one of"):
+        replace(_load(), gray_mode="red")

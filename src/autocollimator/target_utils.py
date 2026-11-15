@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Iterable, Sequence
 
 from autocollimator.config.models import (
+    GRAY_MODES,
     MAX_REFINE_SHIFT_RANGE,
     OVERSAMPLE_STEP_RANGE,
     PROFILE_MODES,
@@ -345,18 +346,22 @@ def _as_uint8_channel(a: np.ndarray) -> np.ndarray:
     return np.clip(a, 0, 255).astype(np.uint8)
 
 
-def ensure_gray_f64(image: np.ndarray) -> np.ndarray:
+def ensure_gray_f64(image: np.ndarray, gray_mode: str = "luma") -> np.ndarray:
     """
     Ensure a grayscale float64 image.
 
     Accepts:
-      - grayscale (H,W)
-      - BGR color (H,W,3): converted using cv2
+      - grayscale (H,W): returned as float64, whatever ``gray_mode``
+      - BGR color (H,W,3): reduced to one channel according to ``gray_mode``:
+        "luma" (default) cv2 BGR2GRAY, "green" the G channel only, "max" the per-pixel
+        max of B, G, R
 
     Returns
     -------
     np.ndarray float64 of shape (H,W)
     """
+    if gray_mode not in GRAY_MODES:
+        raise ValueError(f"gray_mode must be one of {GRAY_MODES}, got {gray_mode!r}")
     if not isinstance(image, np.ndarray):
         raise TypeError("image must be a numpy.ndarray")
     if image.size == 0:
@@ -368,6 +373,10 @@ def ensure_gray_f64(image: np.ndarray) -> np.ndarray:
     if image.ndim == 3 and image.shape[2] == 3:
         # Use OpenCV luminance conversion for stability
         u8 = ensure_bgr_u8(image)
+        if gray_mode == "green":
+            return u8[:, :, 1].astype(np.float64)
+        if gray_mode == "max":
+            return u8.max(axis=2).astype(np.float64)
         gray_u8 = cv2.cvtColor(u8, cv2.COLOR_BGR2GRAY)
         return gray_u8.astype(np.float64)
 
@@ -1476,6 +1485,7 @@ def find_cross_center(
     fine_window: int = 40,
     refine_search: float = DESKEW_SEARCH_PX,
     max_refine_shift: float = DESKEW_MAX_REFINE_SHIFT_PX,
+    gray_mode: str = "luma",
 ) -> tuple[tuple[float, float] | None, tuple[float, float] | None, np.ndarray, list[float]]:
     """
     Find the center of a crosshair and estimate tilt angles.
@@ -1505,6 +1515,7 @@ def find_cross_center(
         fine_window=fine_window,
         refine_search=refine_search,
         max_refine_shift=max_refine_shift,
+        gray_mode=gray_mode,
     )
     return result.center, result.angles, result.overlay, result.q_ratio_list
 
@@ -1526,6 +1537,7 @@ def find_cross_center_detailed(
     fine_window: int = 40,
     refine_search: float = DESKEW_SEARCH_PX,
     max_refine_shift: float = DESKEW_MAX_REFINE_SHIFT_PX,
+    gray_mode: str = "luma",
 ) -> CrossCenterResult:
     """
     Find the center of a crosshair and estimate tilt angles.
@@ -1553,6 +1565,9 @@ def find_cross_center_detailed(
     max_refine_shift:
         A ROI whose pass-2 position differs from pass 1 by more than this many px, 0.1..3.0,
         falls back to its pass-1 result ("fallback:shift") (deskew only).
+    gray_mode:
+        How a BGR image is reduced to one channel: "luma" (default, cv2 BGR2GRAY), "green"
+        (G channel only) or "max" (per-pixel max of B, G, R). See ``ensure_gray_f64``.
 
     Returns
     -------
@@ -1568,16 +1583,19 @@ def find_cross_center_detailed(
 
     LOGGER.info(
         "Running center-finding util with crop_center=%s crop_size=%s roi_size=%s debug=%s "
-        "profile_mode=%s subpixel=%s",
+        "profile_mode=%s subpixel=%s gray_mode=%s",
         crop_center,
         crop_size,
         roi_size,
         debug,
         profile_mode,
         subpixel,
+        gray_mode,
     )
 
     _validate_profile_options(profile_mode, oversample_step, fine_window, refine_search, max_refine_shift)
+    if gray_mode not in GRAY_MODES:
+        raise ValueError(f"gray_mode must be one of {GRAY_MODES}, got {gray_mode!r}")
 
     if image is None:
         raise ValueError("image is None")
@@ -1605,7 +1623,7 @@ def find_cross_center_detailed(
     if roi_w <= 0 or roi_h <= 0:
         raise ValueError("roi_size values must be > 0")
 
-    gray = ensure_gray_f64(image)
+    gray = ensure_gray_f64(image, gray_mode)
     h_img, w_img = gray.shape[:2]
 
     # Crop bounds

@@ -58,6 +58,8 @@ def _require_subpixel_neighbors(name: str, v) -> int:
 
 # Profile modes for find_cross_center (also used by target_utils).
 PROFILE_MODES = ("average", "deskew")
+# How a BGR image is reduced to one channel (also used by target_utils). "luma" is cv2 BGR2GRAY.
+GRAY_MODES = ("luma", "green", "max")
 OVERSAMPLE_STEP_RANGE = (0.02, 0.5)
 REFINE_SEARCH_RANGE = (0.5, 3.0)
 MAX_REFINE_SHIFT_RANGE = (0.1, 3.0)
@@ -77,6 +79,12 @@ ROI_METHODS = (
 def _require_profile_mode(name: str, v) -> str:
     if v not in PROFILE_MODES:
         raise ValueError(f"{name} must be one of {PROFILE_MODES}, got {v!r}")
+    return v
+
+
+def _require_gray_mode(name: str, v) -> str:
+    if v not in GRAY_MODES:
+        raise ValueError(f"{name} must be one of {GRAY_MODES}, got {v!r}")
     return v
 
 
@@ -243,6 +251,8 @@ class MeasurementParameters:
     fine_window: int = 40
     refine_search: float = 1.5
     max_refine_shift: float = 0.75
+    # Optional in TOML; "luma" keeps the original cv2 grayscale conversion.
+    gray_mode: str = "luma"
 
     def __post_init__(self) -> None:
         _require_bool("measurement_parameters.subpixel", self.subpixel)
@@ -252,6 +262,7 @@ class MeasurementParameters:
         _require_fine_window("measurement_parameters.fine_window", self.fine_window)
         _require_refine_search("measurement_parameters.refine_search", self.refine_search)
         _require_max_refine_shift("measurement_parameters.max_refine_shift", self.max_refine_shift)
+        _require_gray_mode("measurement_parameters.gray_mode", self.gray_mode)
         if not self.refine_search < self.fine_window:
             raise ValueError(
                 f"measurement_parameters.refine_search ({self.refine_search}) must be smaller than "
@@ -284,6 +295,7 @@ class MeasurementParameters:
             max_refine_shift=_require_max_refine_shift(
                 "measurement_parameters.max_refine_shift", d.get("max_refine_shift", 0.75)
             ),
+            gray_mode=_require_gray_mode("measurement_parameters.gray_mode", d.get("gray_mode", "luma")),
         )
 
 
