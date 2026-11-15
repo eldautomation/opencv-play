@@ -26,7 +26,6 @@ from autocollimator.config.models import (
 )
 
 from autocollimator.config.store import (
-    ConfigError,
     load_library,
     load_main,
     update_main_device_fields,

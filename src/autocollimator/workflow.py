@@ -6,19 +6,12 @@ import numpy as np
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Callable
 
 from autocollimator.config.models import (
-    Device,
-    DetectOptics,
-    ImageSensor,
-    IOHardware,
-    SourceOptics,
     MeasurementParameters,
-    QualityLimits,
     MeasuredValues,
     Recommendations,
-    MeasurementHardware,
     MeasurementOutput,
     PresearchRecord,
     PresearchResult,
@@ -46,21 +39,6 @@ LOGGER = logging.getLogger(__name__)
 # Overlay color (BGR) of the pre-search's recommended region: orange, distinct from the debug
 # overlay's blue crop, yellow ROIs, green ROI centers, red center and magenta lines.
 PRESEARCH_REGION_COLOR = (0, 165, 255)
-
-# @dataclass(frozen=True)
-# class CenterFindingResult:
-#     """
-#     Result of a center-finding workflow run.
-#     """
-
-#     success: bool
-#     position: tuple[float, float] | None
-#     angles: tuple[float, float] | None
-#     crop_center: tuple[int, int] | None
-#     crop_size: tuple[int, int] | None
-#     roi_size: tuple[int, int]
-#     debug_prefix: str | None
-#     message: str
 
 
 def _validate_image(image: np.ndarray) -> np.ndarray:
@@ -94,25 +72,6 @@ def _validate_image(image: np.ndarray) -> np.ndarray:
         raise ValueError(f"image must be 2D or 3D, got shape {image.shape}")
 
     return image
-
-
-def _default_crop_from_image(image: np.ndarray) -> tuple[tuple[int, int], tuple[int, int]]:
-    """
-    Compute a simple default crop region from the image.
-
-    Current behavior:
-    - crop center = center of image
-    - crop size = half the image width/height
-
-    This is a reasonable first-pass fallback until config-driven crop logic is added.
-    """
-    height, width = image.shape[:2]
-
-    crop_center = (width // 2, height // 2)
-    crop_size = (max(1, width // 1.3), max(1, height // 1.3))
-    crop_size = ( int(crop_size[0]) , int(crop_size[1]) )
-
-    return crop_center, crop_size
 
 
 def _quality_failure_message(q_ratio_list: list[float], q_limit: float) -> str:
@@ -213,12 +172,6 @@ def _choose_crop_and_measure(
     )
 
 
-            # app=self,
-            # image=image,
-            # mps=mps,
-            # debug=debug,
-            # debug_prefix=debug_prefix,
-
 def run_center_finding_on_image(
     app: "AutocollimatorApp",
     image: np.ndarray,
@@ -239,12 +192,6 @@ def run_center_finding_on_image(
         Running application instance.
     image:
         Input image as a NumPy array.
-    crop_center:
-        Optional crop center in pixels. If omitted, a default is computed.
-    crop_size:
-        Optional crop size in pixels. If omitted, a default is computed.
-    roi_size:
-        ROI size passed through to ``find_cross_center``.
     debug:
         Whether debug outputs should be generated.
     debug_prefix:
@@ -304,13 +251,6 @@ def run_center_finding_on_image(
         debug_prefix_path = Path(debug_prefix)
         debug_prefix_path.parent.mkdir(parents=True, exist_ok=True)
         debug_prefix_str = str(debug_prefix_path)
-
-    if crop_center is None or crop_size is None:
-        default_center, default_size = _default_crop_from_image(image)
-        if crop_center is None:
-            crop_center = default_center
-        if crop_size is None:
-            crop_size = default_size
 
     if (
         not isinstance(crop_center, tuple)

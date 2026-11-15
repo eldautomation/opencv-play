@@ -9,7 +9,7 @@ Edits applied:
 - Replaced ad-hoc prints with logging-based debug output
 - Fixed several logic errors (undefined helpers, incorrect ndim checks, uninitialized returns)
 - Added safer ROI clipping and angle computation (atan2)
-- Prevented side effects on import (moved test harness under __main__)
+- Prevented side effects on import (no test harness; matplotlib is imported only for debug plots)
 """
 
 from __future__ import annotations
@@ -20,7 +20,6 @@ import math
 import os
 import shutil
 import cv2
-import matplotlib.pyplot as plt
 import numpy as np
 import statistics
 import hashlib
@@ -28,7 +27,7 @@ import hashlib
 from dataclasses import dataclass
 
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Sequence
 
 from autocollimator.units import wrap_symmetric
 
@@ -147,23 +146,6 @@ def image_md5(image: np.ndarray) -> str:
 
     return digest
 
-def file_md5(path: str | Path, chunk_size: int = 1024 * 1024) -> str:
-    """
-    Compute an MD5 hash of a file's raw bytes.
-    """
-    file_path = Path(path)
-    if not file_path.exists():
-        raise FileNotFoundError(f"File not found: {file_path}")
-    if not file_path.is_file():
-        raise ValueError(f"Path is not a file: {file_path}")
-
-    hasher = hashlib.md5()
-    with file_path.open("rb") as f:
-        for chunk in iter(lambda: f.read(chunk_size), b""):
-            hasher.update(chunk)
-
-    return hasher.hexdigest()
-
 # ----------------------------
 # Numeric helpers
 # ----------------------------
@@ -201,48 +183,6 @@ def pct_list_to_int_list(pct_list: Sequence[float], scale: int) -> list[int]:
         out.append(int(val))
     return out
 
-
-def pixels_to_pct(pixel_coords: tuple[int, int], image_size: tuple[int, int]) -> tuple[float, float]:
-    """
-    Convert pixel coordinates to fractions of overall image size.
-
-    Parameters
-    ----------
-    pixel_coords:
-        (pix_x, pix_y) integers.
-    image_size:
-        (size_x, size_y) integers.
-
-    Returns
-    -------
-    (pct_x, pct_y):
-        Fractions in [0, 1]. Note that 1.0 is allowed when pix==size.
-
-    Raises
-    ------
-    TypeError, ValueError
-    """
-    if (
-        not isinstance(pixel_coords, tuple)
-        or not isinstance(image_size, tuple)
-        or len(pixel_coords) != 2
-        or len(image_size) != 2
-    ):
-        raise TypeError("pixel_coords and image_size must be tuples of length 2")
-
-    pix_x, pix_y = pixel_coords
-    size_x, size_y = image_size
-
-    if not all(isinstance(v, (int, np.integer)) for v in (pix_x, pix_y, size_x, size_y)):
-        raise TypeError("pixel_coords and image_size must contain integers")
-
-    if size_x <= 0 or size_y <= 0:
-        raise ValueError("image_size values must be positive")
-
-    if not (0 <= pix_x <= size_x and 0 <= pix_y <= size_y):
-        raise ValueError("pixel_coords must be within image bounds")
-
-    return float(pix_x) / float(size_x), float(pix_y) / float(size_y)
 
 def line_intersection(line1: Line, line2: Line) -> Point:
     """
@@ -640,6 +580,9 @@ def plot_xy_positions(
       - 1D array y -> x is index
       - 2D array of shape (N,2) where column 0 is x and column 1 is y
     """
+    # Imported here so that importing autocollimator does not import matplotlib (R14).
+    import matplotlib.pyplot as plt
+
     if positions is None:
         raise ValueError("positions is None")
     if not isinstance(dpi, (int, np.integer)) or dpi <= 0:
@@ -669,107 +612,6 @@ def plot_xy_positions(
 # ----------------------------
 # Center finding
 # ----------------------------
-def sdrm(values, search_size, debug = True, debug_prefix = "./test_out/test-"):
-    """
-
-    --------
-    Inputs
-    --------
-    values: 
-        A 1D array of floating point number. 
-        This is the data who's center we want to find. 
-    search_size: int 
-        This is the size of the window we want to search. 
-    debug: bool 
-        This determines if the debug information is output 
-    debug_prefix: str 
-        A prefix used for saving images. 
-
-    --------        
-    Outputs: 
-    --------
-    peak_from_left: 
-        The position of the pixel, measured from the left of the area
-    peak_from_center: 
-        The position of the pixel, easured from the distance from the center pixel.
-
-
-    """
-    values = np.asarray(values, dtype=np.float64)
-
-    if values.ndim != 1:
-        raise ValueError("Input must be a 1D list or array")
-    if not isinstance(search_size,int):
-        raise ValueError("search_size must be an integer")
-    if search_size < 0:
-        raise ValueError("search_size must be >= 0")
-
-    indices = np.arange(len(values), dtype=np.float64)
-    values_flipped = np.flip(values)
-
-
-    # print(f"length of indices:{len(indices)}")
-    # print(f"length of values:{len(values)}")
-    # print(f"length of values_flipped:{len(values_flipped)}")
-    # Assume uniform spacing
-
-    step = indices[1] - indices[0]
-
-    sums = []
-    sums2 = []
-    sums3 = []
-
-    x = np.average(values) # adjusts to background (average) to help avoid issues with rss going high because the backgroudn is bright. 
-
-    for i in range (2*search_size+1):
-        j = 2*search_size-i
-        k = -1*search_size+i # Calcualted as the offset from the center pixel
-
-        # Generate new index ranges
-        lower_indices = indices[0] - step * np.arange(j, 0, -1)
-        upper_indices = indices[-1] + step * np.arange(1, i)
-
-        padded_indices = np.concatenate([lower_indices, indices, upper_indices])
-        padded_values  = np.concatenate([np.ones(j)*x, values,         np.ones(i)*x])
-        flipped_values =np.concatenate([np.ones(i)*x , values_flipped, np.ones(j)*x]) 
-
-        diff = padded_values - flipped_values
-        rss = math.sqrt(float(np.sum(diff * diff)))
-
-        # print(f"i :{i}\tj :{j}\tindex:{indices[i]}\tl_pad:{l_pad}\tl_flip:{l_flip}\trss:{rss}")
-        # print(f"i :{i}\tj :{j}\tindex:{indices[i]}\trss:{rss}")
-        
-        # print(f"i :{i}\tj :{j}\tk:{k}\tindex:{indices[i]}\trss:{rss}")
-
-        sums.append((i,rss))
-        sums2.append((indices[i],rss))
-        sums3.append((k,rss))
-
-
-    min_point = min(sums, key=lambda t: t[1]) # 
-    min_point2 = min(sums2, key=lambda t: t[1])# 
-    min_point3 = min(sums3, key=lambda t: t[1])# Calculated
-
-    if debug: 
-        plot_xy_positions(padded_values,x_label = "Pixel Value", y_label = "Pixel Intensity", title = "Padded Values", save_path = debug_prefix+"---sdrm-padded.jpg",dpi = 300)
-        plot_xy_positions(flipped_values,x_label = "Pixel Value", y_label = "PIxel Intensity", title = "Flipped Values", save_path = debug_prefix+"---sdrm-flpped.jpg",dpi = 300)
-        plot_xy_positions(sums2,x_label = "Pixel Value", y_label = "Rss Values", title = "Rss value", save_path = debug_prefix+"---sdrm-rss-from-left.jpg",dpi = 300)
-        plot_xy_positions(sums3,x_label = "Pixel Value, corrected", y_label = "Rss Values", title = "Rss value", save_path = debug_prefix+"---srdm-rss-centered.jpg",dpi = 300)
-
-        print(f"search_size:\t{search_size}")
-        # print(f"min point1:{min_point}")
-        # print(f"min point2:{min_point2}")
-        print(f"min point3:{min_point3}")
-
-        # print(f"sums:\n{sums}")
-        # print(f"sums2:\n{sums2}")
-
-    peak_from_left  = min_point[0]
-    peak_from_center = min_point3[0]
-
-    return peak_from_center
-
-
 def sdrm_2(
     values,
     search_size: int,
@@ -939,8 +781,6 @@ def _sdrm_core_detail(
     indices = np.arange(n, dtype=np.float64)
     values_flipped = np.flip(arr)
 
-    step = float(indices[1] - indices[0])  # uniform spacing; equals 1.0 with arange
-
     # Baseline padding value (original code uses average to reduce background bias)
     baseline = float(np.average(arr))
 
@@ -958,11 +798,6 @@ def _sdrm_core_detail(
     for i in range(2 * search_size + 1):
         j = 2 * search_size - i          # left pad count
         k = -search_size + i             # offset from center
-
-        # Build padded index ranges (kept for parity; not used in RSS)
-        # lower_indices = indices[0] - step * np.arange(j, 0, -1)
-        # upper_indices = indices[-1] + step * np.arange(1, i)
-        # padded_indices = np.concatenate([lower_indices, indices, upper_indices])
 
         padded_values = np.concatenate(
             [np.full(j, baseline, dtype=np.float64), arr, np.full(i, baseline, dtype=np.float64)]
@@ -1058,28 +893,6 @@ def _sdrm_core_detail(
         LOGGER.debug(f"SDRM - min rss value={ma}")
         LOGGER.debug(f"SDRM - min rss / mean rss={r1}")
         LOGGER.debug(f"SDRM - min rss / max rss={r2}")    
-
-
-        # if r1 > 0.7:
-        #     src = f"{debug_prefix}-rss_vs_pos.jpg"
-        #     dst = f"{debug_prefix}-rss_vs_pos-007.jpg"
-        #     shutil.copyfile(src,dst)
-        # elif r1 > 0.6:
-        #     src = f"{debug_prefix}-rss_vs_pos.jpg"
-        #     dst = f"{debug_prefix}-rss_vs_pos-006.jpg"
-        #     shutil.copyfile(src,dst)
-        # elif r1 > 0.5:
-        #     src = f"{debug_prefix}-rss_vs_pos.jpg"
-        #     dst = f"{debug_prefix}-rss_vs_pos-005.jpg"
-        #     shutil.copyfile(src,dst)
-        # elif r1 > 0.4:
-        #     src = f"{debug_prefix}-rss_vs_pos.jpg"
-        #     dst = f"{debug_prefix}-rss_vs_pos-004.jpg"
-        #     shutil.copyfile(src,dst)
-        # elif r1 > 0.3:
-        #     src = f"{debug_prefix}-rss_vs_pos.jpg"
-        #     dst = f"{debug_prefix}-rss_vs_pos-003.jpg"
-        #     shutil.copyfile(src,dst)
 
 
     # Original function returned peak_from_center only
@@ -1211,7 +1024,6 @@ def find_center_pixel(
         else:
             # Work on a symmetric chunk around the center to make SDRM meaningful
             chunk = profile[center_in_window - max_off : center_in_window + max_off + 1]
-            # best_kk = sdrm(chunk,max_off,debug = True, debug_prefix = f"{debug_prefix}")
             best_k,q_ratio = sdrm_2(
                 chunk,
                 max_off,
@@ -1224,21 +1036,6 @@ def find_center_pixel(
             if best_k == None:
                 return None,q_ratio
             pos_x = float(window_center + best_k)
-
-            if debug:
-                pairs = np.array(
-                    [(k, float(np.sqrt(np.mean((chunk - np.pad(chunk[::-1], (max_off, max_off), 'constant',
-                                                              constant_values=float(np.mean(chunk)))[max_off + k : max_off + k + chunk.size]))**2)))
-                     for k in range(-max_off, max_off + 1)],
-                    dtype=np.float64,
-                )
-                # plot_xy_positions(
-                #     pairs,
-                #     x_label="Offset (px)",
-                #     y_label="RMS",
-                #     title="SDRM score vs offset",
-                #     save_path=f"{debug_prefix}_sdrm.jpg",
-                # )
 
     else:
         raise ValueError(f"Unknown search_method: {search_method!r}")
@@ -1811,7 +1608,6 @@ def find_cross_center_detailed(
     overlay = ensure_bgr_u8(gray)
     if debug:
         overlay = draw_box_on_image(overlay, (cx0, cy0), (cx1 - 1, cy1 - 1), width=3, color=(255, 0, 0))
-        # LOGGER.debug(f"overlay file save location: {debug_prefix}_overlay.jpg")
         cv2.imwrite(f"{debug_prefix}_overlay.jpg", overlay)
 
     # ROI centers in full-image coordinates (approximate)
@@ -1824,20 +1620,11 @@ def find_cross_center_detailed(
 
     centers_measured: dict[str, tuple[float, float]] = {}
 
-    # LOGGER.debug(f"Debug value in find_cross_center: {debug}")
-    # LOGGER.debug(f"ROI Centers: {roi_centers.items()}")
-
-    # for name,(rx,ry) in roi_centers.items():
-    #         LOGGER.debug(f"ROI Name: {name}")
-
     measure_fail = 0
     q_ratio_list = []
     # Per ROI, from pass 1: (x0, y0, x1, y1, roi in search orientation, position in roi)
     roi_data: dict[str, tuple[int, int, int, int, np.ndarray, float]] = {}
     for name, (rx, ry) in roi_centers.items():
-        # LOGGER.debug(f"Inside the ROI Loop - Name of ROI:{name}")
-        # LOGGER.debug(f"Find Cross Center - Debug prefix: {debug_prefix}_overlay.jpg")
-
         if name in ("top", "bottom"):
             # ROI is wide in x, short in y
             s = 0
@@ -1850,8 +1637,6 @@ def find_cross_center_detailed(
 
             y0 = int(ry - roi_h * (1-s) )
             y1 = int(ry + roi_h * (s-0) )
-
-            # print(f"name:{name}\trx:{rx}\try:{ry}\ty0:{y0}\ty1:{y1}")
 
             x0, y0, x1, y1 = _clip_roi(x0, y0, x1, y1, w_img, h_img)
             roi = gray[y0:y1, x0:x1]
@@ -1870,7 +1655,6 @@ def find_cross_center_detailed(
                 debug_prefix=f"{debug_prefix}_{name}",
             )
 
-            # LOGGER.debug(f"Quality ratio of center finding: {q_ratio}")
             # A non-finite q also fails when find_center_pixel fell back to argmax (R21).
             if pos_x is None or not math.isfinite(q_ratio):
                 LOGGER.warning(_roi_quality_failure_text(name, q_ratio))
@@ -2030,11 +1814,6 @@ def find_cross_center_detailed(
     right = centers_measured["right"]
     left = centers_measured["left"]
 
-    # old center finding algoithm - not accurate. 
-    # x_center = (top[0] + bottom[0]) / 2.0
-    # y_center = (right[1] + left[1]) / 2.0
-    # center = (x_center, y_center)
-    
     l1 = (top,bottom)
     l2 = (left, right)
     center = line_intersection(l1, l2)
@@ -2063,104 +1842,8 @@ def find_cross_center_detailed(
         LOGGER.debug(f"Quality ratio from boxes: {q_ratio_list}")
         cv2.imwrite(f"{debug_prefix}_overlay.jpg", overlay)
 
-        # LOGGER.info("Measured angles (vertical, horizontal): (%.3f, %.3f)", angle_v, angle_h)
 
     return CrossCenterResult(
         center, (angle_v, angle_h), overlay, q_ratio_list, roi_methods_tuple, roi_traces, saturation_tuple,
         windows_tuple,
     )
-
-
-# ----------------------------
-# Test harness (optional)
-# ----------------------------
-def run_demo() -> None:
-    """
-    Example workflow used by the original file.
-
-    This is intentionally not executed on import.
-    """
-    logging.basicConfig(level=logging.INFO)
-
-    prefix_in = Path("./test_in")
-    prefix_out = Path("./test_out")
-    clear_folder(prefix_out, create=True)
-
-    images = [
-        "blob-05.jpg",
-        "blob-06.jpg",
-        "blob-08.jpg",
-        "blob-09.jpg",
-        "blob-11.jpg",
-        "blob-12.jpg",
-    ]
-
-    # Approximate percent centers and crop sizes (original values)
-    cx_list = [0.37, 0.6, 0.27, 0.6, 0.3, 0.6, 0.5]
-    cy_list = [0.5, 0.7, 0.35, 0.4, 0.4, 0.4, 0.4]
-    x_pct_list = [0.4, 0.6, 0.4, 0.6, 0.4, 0.6, 0.6]
-    y_pct_list = [0.4, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6]
-
-    first = cv2.imread(str(prefix_in / images[0]))
-    if first is None:
-        raise FileNotFoundError(f"Cannot read image: {prefix_in / images[0]}")
-    height, width = first.shape[:2]
-
-    cx_px = pct_list_to_int_list(cx_list, width)
-    cy_px = pct_list_to_int_list(cy_list, height)
-    x_crop_px = pct_list_to_int_list(x_pct_list, width)
-    y_crop_px = pct_list_to_int_list(y_pct_list, height)
-
-    s="Summary:\n"
-
-    for i, fname in enumerate(images, start=1):
-        img = cv2.imread(str(prefix_in / fname))
-        if img is None:
-            LOGGER.warning("Skipping unreadable image: %s", fname)
-            continue
-
-        debug_prefix = str(prefix_out / f"debug-{i}")
-        position, angles = find_cross_center(
-            image=img,
-            crop_center=(cx_px[i - 1], cy_px[i - 1]),
-            crop_size=(x_crop_px[i - 1], y_crop_px[i - 1]),
-            roi_size=(500, 20),
-            debug=True,
-            debug_prefix=debug_prefix,
-        )
-        LOGGER.info("Initial position=%s angles=%s", position, angles)
-
-        if position == None:
-            LOGGER.warning(f"file ({fname}) failed to find reliable centerpoint.  Prefix:{prefix_in}")
-            continue
-
-        crop_pixels = min(x_crop_px[i - 1], y_crop_px[i - 1])
-        position2, angles2 = find_cross_center(
-            image=img,
-            crop_center=(int(position[0]), int(position[1])),
-            crop_size=(crop_pixels, crop_pixels),
-            roi_size=(500, 20),
-            debug=True,
-            debug_prefix=f"{debug_prefix}_refined",
-        )
-        LOGGER.info("Refined position=%s angles=%s", position2, angles2)
-
-        x0 = position[0]
-        x1 = position2[0]
-        y0 = position[1]
-        y1 = position2[1]
-
-        s+=f"fname:{fname}\tprefix:{debug_prefix}\tx0:{x0}\ty0:{y0}\tx1:{x1}\ty1:{y1}\t\n"
-
-        if position == None:
-            print(f"file ({fname}) failed.  Prefix:{prefix_in}")
-            continue
-        
-    print(s)
-
-
-
-if __name__ == "__main__":
-    # Uncomment to run the demo workflow.
-    run_demo()
-    pass
