@@ -30,6 +30,15 @@ hard-coded "Pixels". Angle wrap adds 180° to negatives, so −1.45° is reporte
 Needs design decisions before coding: which EFL (detect_optics.efl1/efl2?), zero reference,
 output units (arcsec), sign convention. Keep reticle rotation as a separate, clearly named field,
 wrapped to (−90°, 90°].
+Status: resolved in Phase F (2026-11-15, docs/phase_F_prompt.md). New instrument layer
+(`instrument.py`, `units.py`): `to_angular` converts the image measurement to tilt_x/tilt_y with the
+exact formula ½·atan(d / collimator_efl_mm) (X right, Y up, zero = image center by default, or a
+calibrated/measured point), plus rotation and orthogonality, in selectable units (rad, deg, mrad,
+µrad, arcmin, arcsec; tilt and rotation set independently). Rotation zero: image axes or a measured
+value. Because a crosshair is symmetric under 90°, line angles and rotation are wrapped to
+(−45°, 45°] (by design, not the (−90°, 90°] suggested above), so blob-06 now reads −1.45°.
+a0 = vertical line, a1 = horizontal line, counter-clockwise positive. Measurement YAML holds the
+image measurement, the angular measurement and an InstrumentModel snapshot.
 
 ## Significant
 
@@ -40,6 +49,15 @@ pass (e.g. row/column projection profiles on a downsampled image) then the exist
 ### R5 — Config does not match hardware / design doc
 Test images are 1920×1080; configured sensor is IMX296 (1456×1088); no check that image size matches
 the sensor. Detect optics EFLs are 50/100 mm, not 200/400 mm.
+Status: resolved in Phase F (2026-11-15). `efl1/efl2` renamed to `collimator_efl_mm` /
+`microscope_efl_mm` (old keys load with a deprecation warning). The library holds the 200 mm
+(200/45) and 400 mm (400/90) products, with placeholder microscope values; the default device uses
+200 mm. New capture modes `native` (1456×1088, 3.45 µm) and `hd_1080` (1920×1080, effective
+2.61625 µm). The default device selects `hd_1080` to match the bench and test images. Image size is
+checked against the capture mode (`image_size_mismatch = "error" | "warn"`).
+Open: the `hd_1080` scaler crop (0, 134, 1456, 819) is an ASSUMPTION (a centered 16:9 crop). It must
+be verified with libcamera ScalerCrop metadata on the Pi; if it is wrong, the effective pitch, and so
+every tilt value, is off by the same ratio.
 
 ### R6 — Encryption key written into every measurement YAML
 `asdict(measurement)` includes `hardware.device.encryption_key`. Unset env var is silently accepted
