@@ -1,156 +1,102 @@
+"""R8/R9: two-pass center finding on the test images, checked against
+tests/assets/images/manifest.yaml.
+
+Each manifest entry: file, expect (success | failure), optional expected_x / expected_y
+(refined position, compared with POSITION_TOLERANCE_PX), optional notes. Propose a manifest with
+``python3 scripts/regenerate_expected.py`` and review it before committing.
+
+To keep the debug overlays under outputs/integration/center_finding/, run with
+``pytest -m integration --keep-output`` (or KEEP_OUTPUT=1).
+"""
 from __future__ import annotations
 
 import logging
 import os
+import warnings
 from pathlib import Path
 
 import cv2
 import pytest
 
-# Adjust these imports to match your actual module locations
-from autocollimator.target_utils import find_cross_center
-from autocollimator.target_utils import clear_folder, pct_list_to_int_list  # or wherever these live
+from autocollimator.app import AutocollimatorApp
+from autocollimator.target_utils import clear_folder
+from center_finding_two_pass import image_files, load_manifest, measure_two_pass
 
 LOGGER = logging.getLogger(__name__)
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+IMAGE_DIR = PROJECT_ROOT / "tests" / "assets" / "images"
+MANIFEST_PATH = IMAGE_DIR / "manifest.yaml"
+POSITION_TOLERANCE_PX = 0.2
 
-@pytest.mark.integration
-def test_center_finding_generates_debug_outputs(tmp_path: Path) -> None:
-    """
-    Integration test version of run_demo().
+MANIFEST = load_manifest(MANIFEST_PATH) if MANIFEST_PATH.exists() else None
+NO_MANIFEST = "manifest.yaml not committed yet; run scripts/regenerate_expected.py and review its output"
 
-    - Loads a fixed set of test images from tests/assets/images/
-    - Runs the center-finding pipeline twice (initial + refined)
-    - Writes debug images into an output folder so results can be inspected
-    - Produces a summary file in the output folder
 
-    To keep outputs after the test, run with:
-        pytest -m integration --keep-output
-    or set:
-        KEEP_OUTPUT=1
-    """
-    logging.basicConfig(level=logging.INFO)
-
-    # --- Inputs (repo-relative) ---
-    project_root = Path(__file__).resolve().parents[2]
-    prefix_in = project_root / "tests" / "assets" / "images"
-
-    images = [
-        "blob-05.jpg",
-        "blob-06.jpg",
-        "blob-08.jpg",
-        "blob-09.jpg",
-        "blob-11.jpg",
-        "blob-12.jpg",
-    ]
-
-    # Approximate percent centers and crop sizes (original values)
-    cx_list = [0.37, 0.6, 0.27, 0.6, 0.3, 0.6, 0.5]
-    cy_list = [0.5, 0.7, 0.35, 0.4, 0.4, 0.4, 0.4]
-    x_pct_list = [0.4, 0.6, 0.4, 0.6, 0.4, 0.6, 0.6]
-    y_pct_list = [0.4, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6]
-
-    # --- Output folder ---
-    # By default use pytest temp dir (clean). Optionally persist to outputs/ for inspection.
-    keep_output = (
+def _keep_output() -> bool:
+    return (
         os.getenv("KEEP_OUTPUT", "0") == "1"
         or "--keep-output" in os.getenv("PYTEST_ADDOPTS", "")
         or getattr(pytest, "keep_output_flag", False)
     )
 
-    if keep_output:
-        prefix_out = project_root / "outputs" / "integration" / "center_finding"
-        clear_folder(prefix_out, create=True)
-    else:
-        prefix_out = tmp_path / "center_finding"
-        prefix_out.mkdir(parents=True, exist_ok=True)
 
-    # --- Validate inputs exist ---
-    missing = [name for name in images if not (prefix_in / name).is_file()]
-    if missing:
-        pytest.skip(f"Missing integration test images in {prefix_in}: {missing}")
+@pytest.fixture(scope="module")
+def out_dir(tmp_path_factory) -> Path:
+    if _keep_output():
+        path = PROJECT_ROOT / "outputs" / "integration" / "center_finding"
+        clear_folder(path, create=True)
+        return path
+    return tmp_path_factory.mktemp("center_finding")
 
-    # --- Determine image size using first image ---
-    first = cv2.imread(str(prefix_in / images[0]))
-    if first is None:
-        pytest.fail(f"Cannot read image: {prefix_in / images[0]}")
-    height, width = first.shape[:2]
 
-    cx_px = pct_list_to_int_list(cx_list, width)
-    cy_px = pct_list_to_int_list(cy_list, height)
-    x_crop_px = pct_list_to_int_list(x_pct_list, width)
-    y_crop_px = pct_list_to_int_list(y_pct_list, height)
+@pytest.fixture(scope="module")
+def app(out_dir):
+    with AutocollimatorApp(config_dir=PROJECT_ROOT / "configs", output_dir=out_dir, input_dir=IMAGE_DIR) as a:
+        yield a
 
-    summary_lines: list[str] = ["Summary:"]
 
-    for i, fname in enumerate(images, start=1):
-        img_path = prefix_in / fname
-        img = cv2.imread(str(img_path))
-        if img is None:
-            LOGGER.warning("Skipping unreadable image: %s", img_path)
-            continue
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "entry",
+    MANIFEST if MANIFEST is not None else [pytest.param(None, marks=pytest.mark.skip(reason=NO_MANIFEST))],
+    ids=(lambda e: e["file"] if e else "no-manifest"),
+)
+def test_center_finding_matches_manifest(entry, app, out_dir) -> None:
+    img_path = IMAGE_DIR / entry["file"]
+    img = cv2.imread(str(img_path))
+    if img is None:
+        pytest.fail(f"Cannot read image listed in manifest: {entry['file']}")
 
-        debug_prefix = str(prefix_out / f"debug-{i}")
+    result = measure_two_pass(app, img, debug=True, debug_prefix=out_dir / Path(entry["file"]).stem)
+    LOGGER.info("%s: success=%s pass1=%s refined=%s (%s)",
+                entry["file"], result.success, result.pass1_position, result.position, result.message)
 
-        position, angles,overlay,q_ratio_list = find_cross_center(
-            image=img,
-            crop_center=(cx_px[i - 1], cy_px[i - 1]),
-            crop_size=(x_crop_px[i - 1], y_crop_px[i - 1]),
-            roi_size=(500, 20),
-            q_limit=0.5,
-            debug=True,
-            debug_prefix=debug_prefix,
-        )
-        LOGGER.info("Initial %s position=%s angles=%s", fname, position, angles)
+    if entry["expect"] == "failure":
+        assert result.success is False, f"{entry['file']}: expected failure, got center {result.position}"
+        return
 
-        if position is None:
-            summary_lines.append(f"{fname}\tFAILED\tprefix:{debug_prefix}")
-            continue
-
-        crop_pixels = min(x_crop_px[i - 1], y_crop_px[i - 1])
-
-        position2, angles2 = find_cross_center(
-            image=img,
-            crop_center=(int(position[0]), int(position[1])),
-            crop_size=(crop_pixels, crop_pixels),
-            roi_size=(500, 20),
-            debug=True,
-            debug_prefix=f"{debug_prefix}_refined",
-        )
-        LOGGER.info("Refined %s position=%s angles=%s", fname, position2, angles2)
-
-        x0, y0 = float(position[0]), float(position[1])
-        x1, y1 = (float(position2[0]), float(position2[1])) if position2 is not None else (float("nan"), float("nan"))
-
-        summary_lines.append(
-            f"{fname}\tprefix:{debug_prefix}\tx0:{x0:.3f}\ty0:{y0:.3f}\tx1:{x1:.3f}\ty1:{y1:.3f}"
+    assert result.success is True, f"{entry['file']}: expected success, got failure: {result.message}"
+    if "expected_x" in entry:
+        x, y = result.position
+        dx, dy = x - entry["expected_x"], y - entry["expected_y"]
+        assert abs(dx) <= POSITION_TOLERANCE_PX and abs(dy) <= POSITION_TOLERANCE_PX, (
+            f"{entry['file']}: refined center ({x}, {y}) vs expected "
+            f"({entry['expected_x']}, {entry['expected_y']}): diff ({dx:+.3f}, {dy:+.3f}) px, "
+            f"tolerance {POSITION_TOLERANCE_PX} px"
         )
 
-    # Write summary for inspection
-    summary_path = prefix_out / "summary.txt"
-    summary_path.write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
 
-    # Minimal assertions: ensure the pipeline produced some output artifacts
-    # (You can tighten this by checking expected filenames/patterns.)
-    produced_files = list(prefix_out.glob("**/*"))
-    assert len(produced_files) > 0, f"No artifacts produced in {prefix_out}"
-
-    expected_summary = project_root / "tests" / "assets" / "expected" / "center_finding_summary.txt"
-    if not expected_summary.exists():
-        # First-run bootstrap: write expected file so you can review/commit it.
-        expected_summary.parent.mkdir(parents=True, exist_ok=True)
-        expected_summary.write_text(summary_path.read_text(encoding="utf-8"), encoding="utf-8")
-        pytest.fail(
-            f"Expected summary did not exist. Wrote one to {expected_summary}. "
-            "Review it and commit it, then re-run the test."
-        )
-
-    actual = summary_path.read_text(encoding="utf-8")
-    expected = expected_summary.read_text(encoding="utf-8")
-
-    assert actual == expected, (
-        "summary.txt differs from expected.  Confirm output is being generated (--keep-output).\n"
-        f"Expected: {expected_summary}\n"
-        f"Actual:   {summary_path}\n"
-        "Run with: pytest -m integration --keep-output\n"
-        "Then diff the two files.")
+@pytest.mark.integration
+@pytest.mark.skipif(MANIFEST is None, reason=NO_MANIFEST)
+def test_manifest_covers_images() -> None:
+    """Images missing from the manifest are reported, not failed; stale entries fail."""
+    images = set(image_files(IMAGE_DIR))
+    listed = {e["file"] for e in MANIFEST}
+    unlisted = sorted(images - listed)
+    if unlisted:
+        msg = f"{len(unlisted)} image(s) not in manifest.yaml (not tested): {', '.join(unlisted)}"
+        LOGGER.warning(msg)
+        warnings.warn(msg)
+    stale = sorted(listed - images)
+    assert not stale, f"manifest.yaml lists images that do not exist: {stale}"
