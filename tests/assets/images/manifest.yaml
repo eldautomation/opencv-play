@@ -1,0 +1,151 @@
+# PROPOSED manifest written by scripts/regenerate_expected.py with the default configuration.
+# Review every entry (expect, positions, notes) before copying it to tests/assets/images/manifest.yaml.
+# expected_x / expected_y are the refined (pass-2) center in px; the test allows +/- 0.2 px.
+- file: Blur 1.jpg
+  expect: failure
+  notes: 'pass 1: Center could not be determined: quality check failed for ROI top
+    (rss_ratio 0.739 > limit 0.500), bottom (rss_ratio 0.804 > limit 0.500), right
+    (rss_ratio 0.571 > limit 0.500), left (rss_ratio 0.632 > limit 0.500)'
+- file: Blur 2.jpg
+  expect: failure
+  notes: 'pass 1: Center could not be determined: quality check failed for ROI top
+    (rss_ratio 0.656 > limit 0.500), bottom (rss_ratio 0.798 > limit 0.500), right
+    (rss_ratio 0.642 > limit 0.500), left (rss_ratio 0.606 > limit 0.500)'
+- file: Off 3.jpg
+  expect: failure
+  notes: 'pass 1: Center could not be determined: quality check failed for ROI top
+    (rss_ratio 0.839 > limit 0.500), bottom (rss_ratio 0.738 > limit 0.500), right
+    (rss_ratio 0.524 > limit 0.500)'
+- file: Test1.jpg
+  expect: failure
+  notes: 'pass 1: Center could not be determined: quality check failed for ROI top
+    (rss_ratio 0.794 > limit 0.500), bottom (rss_ratio 0.794 > limit 0.500), right
+    (rss_ratio 0.757 > limit 0.500)'
+- file: Test10.jpg
+  expect: failure
+  notes: 'pass 1: Center could not be determined: quality check failed for ROI bottom
+    (rss_ratio 0.753 > limit 0.500), right (rss_ratio 0.535 > limit 0.500)'
+- file: Test11.jpg
+  expect: failure
+  notes: 'pass 1: Center could not be determined: quality check failed for ROI top
+    (rss_ratio 0.786 > limit 0.500), bottom (rss_ratio 0.882 > limit 0.500)'
+- file: Test12.jpg
+  expect: failure
+  notes: 'pass 1: Center could not be determined: quality check failed for ROI top
+    (rss_ratio 0.801 > limit 0.500), bottom (rss_ratio 0.795 > limit 0.500)'
+- file: Test13.jpg
+  expect: failure
+  notes: 'pass 1: Center could not be determined: quality check failed for ROI top
+    (rss_ratio 0.749 > limit 0.500), bottom (rss_ratio 0.786 > limit 0.500)'
+- file: Test14.jpg
+  expect: success
+  expected_x: 878.3
+  expected_y: 701.55
+- file: Test15.jpg
+  expect: success
+  expected_x: 739.8
+  expected_y: 590.58
+- file: Test2.jpg
+  expect: failure
+  notes: 'pass 1: Center could not be determined: quality check failed for ROI top
+    (rss_ratio 0.798 > limit 0.500), bottom (rss_ratio 0.862 > limit 0.500), left
+    (rss_ratio 0.731 > limit 0.500)'
+- file: Test3.jpg
+  expect: failure
+  notes: 'pass 1: Center could not be determined: quality check failed for ROI top
+    (rss_ratio 0.702 > limit 0.500), bottom (rss_ratio 0.841 > limit 0.500)'
+- file: Test4.jpg
+  expect: success
+  expected_x: 597.04
+  expected_y: 622.49
+- file: Test5.jpg
+  expect: failure
+  notes: 'pass 1: Center could not be determined: quality check failed for ROI top
+    (rss_ratio 0.608 > limit 0.500), right (rss_ratio 0.510 > limit 0.500)'
+- file: Test6.jpg
+  expect: failure
+  notes: 'pass 1: Center could not be determined: quality check failed for ROI right
+    (rss_ratio 0.865 > limit 0.500), left (rss_ratio 0.894 > limit 0.500)'
+- file: Test7.jpg
+  expect: success
+  expected_x: 947.93
+  expected_y: 783.49
+- file: Test8.jpg
+  expect: success
+  expected_x: 970.36
+  expected_y: 648.62
+- file: Test9.jpg
+  expect: failure
+  notes: 'pass 1: Center could not be determined: quality check failed for ROI top
+    (rss_ratio 0.783 > limit 0.500), bottom (rss_ratio 0.801 > limit 0.500)'
+- file: blob-05.jpg
+  expect: success
+  expected_x: 747.07
+  expected_y: 399.93
+- file: blob-06.jpg
+  expect: success
+  expected_x: 1150.97
+  expected_y: 743.03
+- file: blob-08.jpg
+  expect: failure
+  notes: 'pass 1: Center could not be determined: quality check failed for ROI top
+    (rss_ratio 0.890 > limit 0.500), bottom (rss_ratio 0.891 > limit 0.500), left
+    (rss_ratio 0.694 > limit 0.500)'
+- file: blob-09.jpg
+  expect: failure
+  notes: 'pass 1: Center could not be determined: quality check failed for ROI right
+    (rss_ratio 0.570 > limit 0.500), left (rss_ratio 0.688 > limit 0.500)'
+- file: blob-11.jpg
+  expect: failure
+  notes: 'pass 1: Center could not be determined: quality check failed for ROI top
+    (rss_ratio 0.818 > limit 0.500), bottom (rss_ratio 0.879 > limit 0.500), left
+    (rss_ratio 0.680 > limit 0.500)'
+- file: blob-12.jpg
+  expect: success
+  expected_x: 1098.5
+  expected_y: 435.44
+- file: blob-13.jpg
+  expect: success
+  expected_x: 1017.58
+  expected_y: 641.94
+- file: blob-14.jpg
+  expect: failure
+  notes: 'pass 1: Center could not be determined: quality check failed for ROI bottom
+    (rss_ratio 0.717 > limit 0.500)'
+- file: blob-15.jpg
+  expect: success
+  expected_x: 1040.55
+  expected_y: 585.44
+- file: blob-16.jpg
+  expect: success
+  expected_x: 1195.48
+  expected_y: 594.09
+- file: blob-17.jpg
+  expect: failure
+  notes: 'pass 1: Center could not be determined: quality check failed for ROI top
+    (rss_ratio 0.733 > limit 0.500), bottom (rss_ratio 0.533 > limit 0.500)'
+- file: blob-18.jpg
+  expect: failure
+  notes: 'pass 1: Center could not be determined: quality check failed for ROI top
+    (rss_ratio 0.761 > limit 0.500), bottom (rss_ratio 0.719 > limit 0.500)'
+- file: blob-19.jpg
+  expect: failure
+  notes: 'pass 1: Center could not be determined: quality check failed for ROI top
+    (rss_ratio 0.786 > limit 0.500), bottom (rss_ratio 0.885 > limit 0.500), right
+    (rss_ratio 0.514 > limit 0.500)'
+- file: blob-20.jpg
+  expect: success
+  expected_x: 722.08
+  expected_y: 627.97
+- file: blob-21.jpg
+  expect: failure
+  notes: 'pass 1: Center could not be determined: quality check failed for ROI top
+    (rss_ratio 0.774 > limit 0.500), bottom (rss_ratio 0.724 > limit 0.500)'
+- file: blob-22.jpg
+  expect: success
+  expected_x: 884.08
+  expected_y: 566.91
+- file: blob-5.jpg
+  expect: success
+  expected_x: 747.07
+  expected_y: 399.93
