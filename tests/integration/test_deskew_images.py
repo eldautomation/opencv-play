@@ -7,7 +7,7 @@ import cv2
 import pytest
 
 from autocollimator.app import AutocollimatorApp
-from autocollimator.target_utils import find_cross_center_detailed
+from autocollimator.target_utils import _deskew_position, find_cross_center_detailed
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 IMAGE_DIR = PROJECT_ROOT / "tests" / "assets" / "images"
@@ -82,4 +82,16 @@ def test_blob_13_deskew_subpixel_matches_average_subpixel(default_params):
     dx = deskew.center[0] - average.center[0]
     dy = deskew.center[1] - average.center[1]
     assert abs(dx) <= 0.1 and abs(dy) <= 0.1, f"deskew - average = ({dx:+.3f}, {dy:+.3f}) px"
-    assert deskew.roi_methods[2] == "fallback:edge"  # right ROI
+    # With the adaptive window (R17: 1.5 x the 61 px FWHM, ~92 px) the right ROI has a real
+    # pass-2 minimum near pass 1, so it no longer needs the edge fallback.
+    right = deskew.rois[2]
+    assert deskew.roi_methods[2] == "deskew"
+    assert deskew.fine_windows[2] > 40
+    assert abs(right.pos2 - right.pos1) <= 0.1
+    # The edge guard itself, on the 40 px window that triggered it before the adaptive window.
+    method, pos2 = _deskew_position(
+        right.roi, right.pos1, right.slope, oversample_step=0.1, fine_window=40,
+        subpixel=True, subpixel_neighbors=2, name="right",
+    )
+    assert method == "fallback:edge"
+    assert abs(pos2 - right.pos1) == pytest.approx(1.5, abs=0.01)

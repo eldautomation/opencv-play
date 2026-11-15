@@ -66,7 +66,7 @@ def mode_label(mp) -> str:
     readout = f"subpixel n={mp.subpixel_neighbors}" if mp.subpixel else "integer"
     label = f"{mp.profile_mode} / {readout} / gray {mp.gray_mode}"
     if mp.profile_mode == "deskew":
-        label += (f" (step {mp.oversample_step:g}, window {mp.fine_window}, search {mp.refine_search:g},"
+        label += (f" (step {mp.oversample_step:g}, window >= {mp.fine_window} (adaptive), search {mp.refine_search:g},"
                   f" max shift {mp.max_refine_shift:g})")
     return label
 
@@ -138,6 +138,8 @@ def evaluate(image_dir: Path, config_dir: Path, run_dir: Path, overrides: dict) 
             methods = [mv.roi_method_m0, mv.roi_method_m1, mv.roi_method_m2, mv.roi_method_m3]
             sat = [mv.saturation_s0, mv.saturation_s1, mv.saturation_s2, mv.saturation_s3]
             row["sat"] = dict(zip(ROI_NAMES, sat))
+            win = [mv.fine_window_used_f0, mv.fine_window_used_f1, mv.fine_window_used_f2, mv.fine_window_used_f3]
+            row["win"] = dict(zip(ROI_NAMES, win))
             row["methods"] = " ".join(f"{name}:{m}" for name, m in zip(ROI_NAMES, methods))
             row["message"] = mv.message
 
@@ -155,7 +157,8 @@ def evaluate(image_dir: Path, config_dir: Path, run_dir: Path, overrides: dict) 
 def write_csv(rows: list[dict], path: Path) -> None:
     fields = ["file", "size", "status", "reported_success", "expected", "match", "x", "y",
               "a0", "a1", "q_top", "q_bottom", "q_right", "q_left",
-              "sat_top", "sat_bottom", "sat_right", "sat_left", "mode", "methods", "ms", "message", "notes"]
+              "sat_top", "sat_bottom", "sat_right", "sat_left",
+              "win_top", "win_bottom", "win_right", "win_left", "mode", "methods", "ms", "message", "notes"]
     with path.open("w", newline="", encoding="utf-8") as f:
         wr = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         wr.writeheader()
@@ -164,6 +167,7 @@ def write_csv(rows: list[dict], path: Path) -> None:
             for name in ROI_NAMES:
                 out[f"q_{name}"] = (r.get("q") or {}).get(name)
                 out[f"sat_{name}"] = (r.get("sat") or {}).get(name)
+                out[f"win_{name}"] = (r.get("win") or {}).get(name)
             wr.writerow(out)
 
 
@@ -261,7 +265,8 @@ def main() -> int:
     ap.add_argument("--oversample-step", type=float, metavar="PX",
                     help="Bin width of the deskewed profile in px, 0.02-0.5 (used with --profile-mode deskew)")
     ap.add_argument("--fine-window", type=int, metavar="PX",
-                    help="Half-width of the deskewed profile in px (used with --profile-mode deskew)")
+                    help="Minimum half-width of the deskewed profile in px; grows to 1.5 x line FWHM "
+                         "(used with --profile-mode deskew)")
     ap.add_argument("--refine-search", type=float, metavar="PX",
                     help="Pass-2 search half-range in px, 0.5-3.0 (used with --profile-mode deskew)")
     ap.add_argument("--max-refine-shift", type=float, metavar="PX",

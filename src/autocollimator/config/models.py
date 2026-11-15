@@ -123,6 +123,14 @@ def _opt_fraction(name: str, v) -> Optional[float]:
     return float(v)
 
 
+def _opt_window(name: str, v) -> Optional[float]:
+    if v is None:
+        return None
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not v >= 2:
+        raise ValueError(f"{name} must be None or a number >= 2, got {v!r}")
+    return float(v)
+
+
 def _require_roi_method(name: str, v) -> str:
     if v not in ROI_METHODS:
         raise ValueError(f"{name} must be one of {ROI_METHODS}, got {v!r}")
@@ -364,12 +372,20 @@ class MeasuredValues:
     saturation_s1: Optional[float] = None
     saturation_s2: Optional[float] = None
     saturation_s3: Optional[float] = None
+    # Deskew half-width in px used per ROI (adaptive, >= fine_window); None when pass 2 did
+    # not run (average mode, failed pass 1) or in older records.
+    fine_window_used_f0: Optional[float] = None
+    fine_window_used_f1: Optional[float] = None
+    fine_window_used_f2: Optional[float] = None
+    fine_window_used_f3: Optional[float] = None
 
     def __post_init__(self) -> None:
         for name in ("roi_method_m0", "roi_method_m1", "roi_method_m2", "roi_method_m3"):
             _require_roi_method(f"measured_values.{name}", getattr(self, name))
         for name in ("saturation_s0", "saturation_s1", "saturation_s2", "saturation_s3"):
             _opt_fraction(f"measured_values.{name}", getattr(self, name))
+        for name in ("fine_window_used_f0", "fine_window_used_f1", "fine_window_used_f2", "fine_window_used_f3"):
+            _opt_window(f"measured_values.{name}", getattr(self, name))
         if self.success:
             missing = [
                 name
@@ -409,6 +425,10 @@ class MeasuredValues:
             saturation_s1=_opt_fraction("measured_values.saturation_s1", d.get("saturation_s1")),
             saturation_s2=_opt_fraction("measured_values.saturation_s2", d.get("saturation_s2")),
             saturation_s3=_opt_fraction("measured_values.saturation_s3", d.get("saturation_s3")),
+            fine_window_used_f0=_opt_window("measured_values.fine_window_used_f0", d.get("fine_window_used_f0")),
+            fine_window_used_f1=_opt_window("measured_values.fine_window_used_f1", d.get("fine_window_used_f1")),
+            fine_window_used_f2=_opt_window("measured_values.fine_window_used_f2", d.get("fine_window_used_f2")),
+            fine_window_used_f3=_opt_window("measured_values.fine_window_used_f3", d.get("fine_window_used_f3")),
         )
 
 

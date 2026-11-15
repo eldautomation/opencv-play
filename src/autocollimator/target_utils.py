@@ -1267,6 +1267,10 @@ DESKEW_MAX_EMPTY_FRACTION = 0.2
 SATURATION_LEVEL = 250
 # A warning is logged when more than this fraction of a ROI's pixels is saturated.
 SATURATION_WARN_FRACTION = 0.01
+# Deskew pass 2: the profile half-width is at least this many line FWHMs (from pass 1).
+DESKEW_WINDOW_PER_FWHM = 1.5
+# Line-width estimate: the peak is searched within this many px of the pass-1 position.
+LINE_PEAK_SEARCH_PX = 5
 
 
 @dataclass(frozen=True)
@@ -1286,6 +1290,10 @@ class RoiTrace:
     pos2: float | None
     # Fraction of ROI pixels with any channel >= SATURATION_LEVEL (original image, uint8 scale).
     saturation: float | None = None
+    # Pass-1 line FWHM estimate and the deskew half-width given to pass 2 (see
+    # _adaptive_fine_window); None when pass 2 did not run or the FWHM could not be estimated.
+    line_width: float | None = None
+    fine_window_used: float | None = None
 
 
 @dataclass(frozen=True)
@@ -1304,6 +1312,9 @@ class CrossCenterResult:
     rois: tuple[RoiTrace, ...] = ()
     # Saturated-pixel fraction per ROI, in ROI_NAMES order (see roi_saturation_fraction).
     saturation: tuple[float, ...] = ()
+    # Deskew half-width in px given to pass 2 per ROI, in ROI_NAMES order; None when pass 2
+    # did not run for that ROI (average mode, or pass 1 failed).
+    fine_windows: tuple[float | None, ...] = ()
 
 
 def roi_saturation_fraction(roi_u8: np.ndarray, level: int = SATURATION_LEVEL) -> float:
@@ -1357,13 +1368,65 @@ def _validate_profile_options(
         raise ValueError(f"max_refine_shift must be a number in {lo}..{hi}, got {max_refine_shift!r}")
 
 
+def _half_crossing(s: np.ndarray, i_peak: int, half: float, direction: int) -> float | None:
+    """Index where ``s`` first drops below ``half`` walking from ``i_peak`` (linear interpolation)."""
+    i = i_peak
+    while 0 <= i + direction < s.size:
+        j = i + direction
+        if s[j] < half:
+            return i + (half - s[i]) * (j - i) / (s[j] - s[i])
+        i = j
+    return None
+
+
+def _estimate_line_fwhm(profile: np.ndarray, pos1: float) -> float | None:
+    """
+    FWHM in px of the line in a pass-1 profile (ROI averaged along the line), or None.
+
+    Background is the profile median (the line covers a small part of the ROI). Polarity
+    and peak are taken within +/-``LINE_PEAK_SEARCH_PX`` of ``pos1``; the half-maximum
+    crossings on both sides are linearly interpolated. Returns None when the profile has
+    no peak there or a crossing is missing (line runs off the ROI).
+    """
+    p = np.asarray(profile, dtype=np.float64)
+    c = int(round(pos1))
+    lo, hi = max(0, c - LINE_PEAK_SEARCH_PX), min(p.size, c + LINE_PEAK_SEARCH_PX + 1)
+    if hi <= lo:
+        return None
+    bg = float(np.median(p))
+    near = p[lo:hi]
+    sign = 1.0 if near.max() - bg >= bg - near.min() else -1.0
+    s = sign * (p - bg)
+    i_peak = lo + int(np.argmax(s[lo:hi]))
+    if not s[i_peak] > 0:
+        return None
+    half = 0.5 * s[i_peak]
+    left = _half_crossing(s, i_peak, half, -1)
+    right = _half_crossing(s, i_peak, half, +1)
+    if left is None or right is None:
+        return None
+    return float(right - left)
+
+
+def _adaptive_fine_window(profile: np.ndarray, pos1: float, fine_window: float) -> tuple[float, float | None]:
+    """
+    Deskew half-width for pass 2: max(fine_window, DESKEW_WINDOW_PER_FWHM * FWHM), with the
+    FWHM from ``_estimate_line_fwhm``. Never smaller than ``fine_window``; equal to it when
+    the FWHM is unknown. Returns (window, fwhm).
+    """
+    fwhm = _estimate_line_fwhm(profile, pos1)
+    if fwhm is None:
+        return float(fine_window), None
+    return max(float(fine_window), DESKEW_WINDOW_PER_FWHM * fwhm), fwhm
+
+
 def _deskew_profile(
     roi: np.ndarray,
     pos1: float,
     slope: float,
     *,
     oversample_step: float,
-    fine_window: int,
+    fine_window: float,
     name: str,
 ) -> tuple[np.ndarray | None, str]:
     """
@@ -1416,7 +1479,7 @@ def _deskew_position(
     slope: float,
     *,
     oversample_step: float,
-    fine_window: int,
+    fine_window: float,
     subpixel: bool,
     subpixel_neighbors: int,
     name: str,
@@ -1580,7 +1643,9 @@ def find_cross_center_detailed(
     oversample_step:
         Bin width of the deskewed profile in px, 0.02..0.5 (deskew only).
     fine_window:
-        Half-width in px of the deskewed profile around the pass-1 estimate (deskew only).
+        Minimum half-width in px of the deskewed profile around the pass-1 estimate (deskew
+        only). Per ROI the half-width used is max(fine_window, 1.5 * line FWHM), with the FWHM
+        estimated from the pass-1 profile; it is recorded in ``fine_windows``.
     refine_search:
         Pass-2 search half-range in px around the pass-1 estimate, 0.5..3.0 and smaller than
         ``fine_window`` (deskew only). A ROI whose fine minimum lies at either end of this
@@ -1785,6 +1850,8 @@ def find_cross_center_detailed(
     roi_methods = {name: "average" for name in ROI_NAMES}
     roi_slopes: dict[str, float | None] = {name: None for name in ROI_NAMES}
     roi_pos2: dict[str, float | None] = {name: None for name in ROI_NAMES}
+    roi_line_width: dict[str, float | None] = {name: None for name in ROI_NAMES}
+    roi_window: dict[str, float | None] = {name: None for name in ROI_NAMES}
     if profile_mode == "deskew" and not measure_fail:
         # Pass 2: slopes from the pass-1 points; vertical line dx/dy, horizontal line dy/dx.
         top, bottom = centers_measured["top"], centers_measured["bottom"]
@@ -1796,12 +1863,18 @@ def find_cross_center_detailed(
         for name in ROI_NAMES:
             x0, y0, _x1, _y1, roi, pos1 = roi_data[name]
             roi_slopes[name] = slope_v if name in ("top", "bottom") else slope_h
+            window, line_width = _adaptive_fine_window(roi.mean(axis=0), pos1, fine_window)
+            roi_window[name], roi_line_width[name] = window, line_width
+            LOGGER.debug(
+                "Deskew %s: pass-1 line FWHM %s px, fine_window %.4g px (minimum %d)",
+                name, "unknown" if line_width is None else f"{line_width:.4g}", window, fine_window,
+            )
             method, pos2 = _deskew_position(
                 roi,
                 pos1,
                 roi_slopes[name],
                 oversample_step=oversample_step,
-                fine_window=fine_window,
+                fine_window=window,
                 subpixel=subpixel,
                 subpixel_neighbors=subpixel_neighbors,
                 name=name,
@@ -1836,10 +1909,13 @@ def find_cross_center_detailed(
             pos1=roi_data[name][5],
             pos2=roi_pos2[name],
             saturation=saturation[name],
+            line_width=roi_line_width[name],
+            fine_window_used=roi_window[name],
         )
         for name in ROI_NAMES
     )
     saturation_tuple = tuple(saturation[name] for name in ROI_NAMES)
+    windows_tuple = tuple(roi_window[name] for name in ROI_NAMES)
 
     for name in ROI_NAMES:
         x0, y0, x1, y1, _roi, _pos = roi_data[name]
@@ -1857,7 +1933,7 @@ def find_cross_center_detailed(
     if measure_fail: 
         LOGGER.warning(f"Quality too low for reliable center finding: - No center computed")
         return CrossCenterResult(
-            None, None, overlay, q_ratio_list, roi_methods_tuple, roi_traces, saturation_tuple
+            None, None, overlay, q_ratio_list, roi_methods_tuple, roi_traces, saturation_tuple, windows_tuple
         )
 
     # Combine centers
@@ -1902,7 +1978,8 @@ def find_cross_center_detailed(
     _ = slant  # placeholder for future behavior
 
     return CrossCenterResult(
-        center, (angle_v, angle_h), overlay, q_ratio_list, roi_methods_tuple, roi_traces, saturation_tuple
+        center, (angle_v, angle_h), overlay, q_ratio_list, roi_methods_tuple, roi_traces, saturation_tuple,
+        windows_tuple,
     )
 
 

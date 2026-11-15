@@ -310,6 +310,10 @@ def run_center_finding_on_image(
         saturation_s1 = result.saturation[1],
         saturation_s2 = result.saturation[2],
         saturation_s3 = result.saturation[3],
+        fine_window_used_f0 = result.fine_windows[0],
+        fine_window_used_f1 = result.fine_windows[1],
+        fine_window_used_f2 = result.fine_windows[2],
+        fine_window_used_f3 = result.fine_windows[3],
     )
     recommendations = Recommendations(
         updated_brightness=0,
