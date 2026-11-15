@@ -112,3 +112,19 @@ Blob images show a bright band offset from the crosshair, likely a ghost reflect
 reflection in the optics). It is absent in Test8 and Test14. It adds an asymmetric background
 term to the ROI profiles and can bias the SDRM center (see R17). Check baffling, AR coatings and
 element tilt on the bench; compare profiles with and without the band.
+
+### R20 — Default ROI depth increased from 20 px to 40 px
+Decided 2026-11-15. The default depth of the four ROI strips (`roi_size_y`, the dimension
+along the line) changes from 20 px to 40 px.
+Reason: deskew mode needs roi_depth × tan(tilt) ≥ 1 px to fill the oversampled bins.
+Minimum reticle tilt by depth: 20 rows → ~2.9°, 30 → ~1.9°, 40 → ~1.4°, 60 → ~1.0°.
+At 20 rows, bench images Test4/Test7 (~0.7°) and blob-06 (~1°) fall back completely
+(`fallback:tilt`); at 40 rows Test4/Test7 still fall back and blob-06 is borderline.
+Deeper ROIs also average more rows (lower noise), but pick up more line curvature or
+distortion along the line.
+This deliberately changes default results. Golden values that depend on the default depth
+(e.g. blob-22 default (883.72, 566.83), default-config pins in
+test_signal_quality_defaults.py, the blob-22 deskew+subpixel pin) are re-pinned in the
+same commit, with old → new values listed and a before/after report (20 vs 40 px, default,
+sub-pixel and deskew modes). No tolerances are loosened.
+Status: decided; implementation via docs/phase_R20_roi_depth_prompt.md.
