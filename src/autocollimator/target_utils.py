@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
 
-from autocollimator.config.models import OVERSAMPLE_STEP_RANGE, PROFILE_MODES
+from autocollimator.config.models import OVERSAMPLE_STEP_RANGE, PROFILE_MODES, REFINE_SEARCH_RANGE
 
 LOGGER = logging.getLogger(__name__)
 
@@ -1216,10 +1216,26 @@ def _clip_roi(
     return x0c, y0c, x1c, y1c
 
 
-# Deskew pass 2: search half-range around the pass-1 estimate, in pixels.
+# Deskew pass 2: default search half-range around the pass-1 estimate, in pixels.
 DESKEW_SEARCH_PX = 1.5
 # Deskew pass 2 falls back to the pass-1 result when more bins than this are empty.
 DESKEW_MAX_EMPTY_FRACTION = 0.2
+
+
+@dataclass(frozen=True)
+class RoiTrace:
+    """Per-ROI intermediate values of ``find_cross_center_detailed`` (for diagnostics)."""
+
+    name: str
+    x0: int
+    y0: int
+    # ROI pixels in search orientation (transposed for left/right).
+    roi: np.ndarray
+    # Pass-2 slope (dx/dy for top/bottom, dy/dx for left/right); None when pass 2 did not run.
+    slope: float | None
+    # Positions in ROI column coordinates; pos2 is None when pass 2 did not run or fell back.
+    pos1: float
+    pos2: float | None
 
 
 @dataclass(frozen=True)
@@ -1233,9 +1249,13 @@ class CrossCenterResult:
     q_ratio_list: list[float]
     # Profile method per ROI, in ROI_NAMES order: "average", "deskew" or "fallback".
     roi_methods: tuple[str, ...]
+    # Intermediate values per ROI, in ROI_NAMES order.
+    rois: tuple[RoiTrace, ...] = ()
 
 
-def _validate_profile_options(profile_mode: str, oversample_step: float, fine_window: int) -> None:
+def _validate_profile_options(
+    profile_mode: str, oversample_step: float, fine_window: int, refine_search: float
+) -> None:
     if profile_mode not in PROFILE_MODES:
         raise ValueError(f"profile_mode must be one of {PROFILE_MODES}, got {profile_mode!r}")
     lo, hi = OVERSAMPLE_STEP_RANGE
@@ -1251,30 +1271,37 @@ def _validate_profile_options(profile_mode: str, oversample_step: float, fine_wi
         or fine_window < 2
     ):
         raise ValueError(f"fine_window must be an int >= 2, got {fine_window!r}")
+    lo, hi = REFINE_SEARCH_RANGE
+    if (
+        isinstance(refine_search, (bool, np.bool_))
+        or not isinstance(refine_search, (int, float, np.floating, np.integer))
+        or not lo <= refine_search <= hi
+    ):
+        raise ValueError(f"refine_search must be a number in {lo}..{hi}, got {refine_search!r}")
+    if not refine_search < fine_window:
+        raise ValueError(f"refine_search ({refine_search}) must be smaller than fine_window ({fine_window})")
 
 
-def _deskew_position(
+def _deskew_profile(
     roi: np.ndarray,
     pos1: float,
     slope: float,
     *,
     oversample_step: float,
     fine_window: int,
-    subpixel: bool,
-    subpixel_neighbors: int,
     name: str,
-) -> float | None:
+) -> tuple[np.ndarray, float] | None:
     """
-    Pass 2 of the deskew profile mode for one ROI (in search orientation: the line runs
-    along the rows, the profile is taken across the columns).
+    Deskewed, oversampled profile of one ROI (in search orientation: the line runs along
+    the rows, the profile is taken across the columns).
 
     Every pixel is projected onto the axis across the line, u = col - slope * (row - row_ref)
-    with row_ref = roi_height / 2, binned at ``oversample_step`` within +/-``fine_window`` px
-    of the pass-1 estimate ``pos1``, and the binned profile is centered with ``_sdrm_core``
-    (no quality limit) within +/-``DESKEW_SEARCH_PX`` of ``pos1``.
+    with row_ref = roi_height / 2, and binned at ``oversample_step`` within +/-``fine_window``
+    px of the pass-1 estimate ``pos1``; empty bins are filled by linear interpolation. The
+    center sample (index ``round(fine_window / oversample_step)``) is at ``pos1``.
 
-    Returns the position in ROI column coordinates, or None when pass 2 does not apply and
-    the pass-1 result should be used.
+    Returns (profile, empty_fraction), or None when pass 2 does not apply (line shifts less
+    than 1 px over the ROI depth, or too many empty bins).
     """
     depth = roi.shape[0]
     if not math.isfinite(slope) or depth * abs(slope) < 1.0:
@@ -1303,8 +1330,36 @@ def _deskew_position(
 
     bins = np.arange(n_bins, dtype=np.float64)
     profile = np.interp(bins, bins[filled], sums[filled] / counts[filled])
+    return profile, empty_fraction
 
-    search_samples = int(round(DESKEW_SEARCH_PX / oversample_step))
+
+def _deskew_position(
+    roi: np.ndarray,
+    pos1: float,
+    slope: float,
+    *,
+    oversample_step: float,
+    fine_window: int,
+    subpixel: bool,
+    subpixel_neighbors: int,
+    name: str,
+    refine_search: float = DESKEW_SEARCH_PX,
+) -> float | None:
+    """
+    Pass 2 of the deskew profile mode for one ROI: center the ``_deskew_profile`` with
+    ``_sdrm_core`` (no quality limit) within +/-``refine_search`` px of ``pos1``.
+
+    Returns the position in ROI column coordinates, or None when pass 2 does not apply and
+    the pass-1 result should be used.
+    """
+    deskewed = _deskew_profile(
+        roi, pos1, slope, oversample_step=oversample_step, fine_window=fine_window, name=name
+    )
+    if deskewed is None:
+        return None
+    profile, empty_fraction = deskewed
+
+    search_samples = int(round(refine_search / oversample_step))
     offset_samples, r1 = _sdrm_core(
         profile,
         search_samples,
@@ -1317,6 +1372,29 @@ def _deskew_position(
         name, slope, empty_fraction, r1, pos1, pos2,
     )
     return pos2
+
+
+def sdrm_ssd_curve(values, search_size: int) -> np.ndarray:
+    """
+    SDRM sum of squared differences for offsets k = -search_size..+search_size (index
+    k + search_size), with the same baseline padding as ``_sdrm_core``. For diagnostics.
+    """
+    arr = np.asarray(values, dtype=np.float64)
+    if arr.ndim != 1 or arr.size <= 2 * search_size:
+        raise ValueError(
+            f"values must be 1D with more than 2*search_size elements (got shape {arr.shape}, "
+            f"search_size={search_size})"
+        )
+    baseline = float(np.average(arr))
+    flipped = np.flip(arr)
+    ssd = np.empty(2 * search_size + 1, dtype=np.float64)
+    for i in range(2 * search_size + 1):
+        j = 2 * search_size - i
+        padded = np.concatenate([np.full(j, baseline), arr, np.full(i, baseline)])
+        padded_flipped = np.concatenate([np.full(i, baseline), flipped, np.full(j, baseline)])
+        diff = padded - padded_flipped
+        ssd[i] = float(np.sum(diff * diff))
+    return ssd
 
 
 def _roi_point(name: str, x0: int, y0: int, roi: np.ndarray, pos: float) -> tuple[float, float]:
@@ -1342,6 +1420,7 @@ def find_cross_center(
     profile_mode: str = "average",
     oversample_step: float = 0.1,
     fine_window: int = 40,
+    refine_search: float = DESKEW_SEARCH_PX,
 ) -> tuple[tuple[float, float] | None, tuple[float, float] | None, np.ndarray, list[float]]:
     """
     Find the center of a crosshair and estimate tilt angles.
@@ -1369,6 +1448,7 @@ def find_cross_center(
         profile_mode=profile_mode,
         oversample_step=oversample_step,
         fine_window=fine_window,
+        refine_search=refine_search,
     )
     return result.center, result.angles, result.overlay, result.q_ratio_list
 
@@ -1388,6 +1468,7 @@ def find_cross_center_detailed(
     profile_mode: str = "average",
     oversample_step: float = 0.1,
     fine_window: int = 40,
+    refine_search: float = DESKEW_SEARCH_PX,
 ) -> CrossCenterResult:
     """
     Find the center of a crosshair and estimate tilt angles.
@@ -1407,6 +1488,9 @@ def find_cross_center_detailed(
         Bin width of the deskewed profile in px, 0.02..0.5 (deskew only).
     fine_window:
         Half-width in px of the deskewed profile around the pass-1 estimate (deskew only).
+    refine_search:
+        Pass-2 search half-range in px around the pass-1 estimate, 0.5..3.0 and smaller than
+        ``fine_window`` (deskew only).
 
     Returns
     -------
@@ -1431,7 +1515,7 @@ def find_cross_center_detailed(
         subpixel,
     )
 
-    _validate_profile_options(profile_mode, oversample_step, fine_window)
+    _validate_profile_options(profile_mode, oversample_step, fine_window, refine_search)
 
     if image is None:
         raise ValueError("image is None")
@@ -1583,6 +1667,8 @@ def find_cross_center_detailed(
         centers_measured[name] = _roi_point(name, x0, y0, roi, pos_x)
 
     roi_methods = {name: "average" for name in ROI_NAMES}
+    roi_slopes: dict[str, float | None] = {name: None for name in ROI_NAMES}
+    roi_pos2: dict[str, float | None] = {name: None for name in ROI_NAMES}
     if profile_mode == "deskew" and not measure_fail:
         # Pass 2: slopes from the pass-1 points; vertical line dx/dy, horizontal line dy/dx.
         top, bottom = centers_measured["top"], centers_measured["bottom"]
@@ -1593,16 +1679,19 @@ def find_cross_center_detailed(
         slope_h = (right[1] - left[1]) / dx_h if dx_h != 0 else math.nan
         for name in ROI_NAMES:
             x0, y0, _x1, _y1, roi, pos1 = roi_data[name]
+            roi_slopes[name] = slope_v if name in ("top", "bottom") else slope_h
             pos2 = _deskew_position(
                 roi,
                 pos1,
-                slope_v if name in ("top", "bottom") else slope_h,
+                roi_slopes[name],
                 oversample_step=oversample_step,
                 fine_window=fine_window,
                 subpixel=subpixel,
                 subpixel_neighbors=subpixel_neighbors,
                 name=name,
+                refine_search=refine_search,
             )
+            roi_pos2[name] = pos2
             if pos2 is None:
                 roi_methods[name] = "fallback"
             else:
@@ -1613,6 +1702,18 @@ def find_cross_center_detailed(
             ", ".join(f"{name}={roi_methods[name]}" for name in ROI_NAMES),
         )
     roi_methods_tuple = tuple(roi_methods[name] for name in ROI_NAMES)
+    roi_traces = tuple(
+        RoiTrace(
+            name=name,
+            x0=roi_data[name][0],
+            y0=roi_data[name][1],
+            roi=roi_data[name][4],
+            slope=roi_slopes[name],
+            pos1=roi_data[name][5],
+            pos2=roi_pos2[name],
+        )
+        for name in ROI_NAMES
+    )
 
     for name in ROI_NAMES:
         x0, y0, x1, y1, _roi, _pos = roi_data[name]
@@ -1629,7 +1730,7 @@ def find_cross_center_detailed(
 
     if measure_fail: 
         LOGGER.warning(f"Quality too low for reliable center finding: - No center computed")
-        return CrossCenterResult(None, None, overlay, q_ratio_list, roi_methods_tuple)
+        return CrossCenterResult(None, None, overlay, q_ratio_list, roi_methods_tuple, roi_traces)
 
     # Combine centers
     top = centers_measured["top"]
@@ -1672,7 +1773,7 @@ def find_cross_center_detailed(
 
     _ = slant  # placeholder for future behavior
 
-    return CrossCenterResult(center, (angle_v, angle_h), overlay, q_ratio_list, roi_methods_tuple)
+    return CrossCenterResult(center, (angle_v, angle_h), overlay, q_ratio_list, roi_methods_tuple, roi_traces)
 
 
 # ----------------------------

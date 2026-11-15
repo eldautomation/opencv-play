@@ -59,6 +59,7 @@ def _require_subpixel_neighbors(name: str, v) -> int:
 # Profile modes for find_cross_center (also used by target_utils).
 PROFILE_MODES = ("average", "deskew")
 OVERSAMPLE_STEP_RANGE = (0.02, 0.5)
+REFINE_SEARCH_RANGE = (0.5, 3.0)
 # Per-ROI profile method recorded in MeasuredValues.
 ROI_METHODS = ("average", "deskew", "fallback")
 
@@ -80,6 +81,13 @@ def _require_fine_window(name: str, v) -> int:
     if isinstance(v, bool) or not isinstance(v, int) or v < 2:
         raise ValueError(f"{name} must be an int >= 2, got {v!r}")
     return v
+
+
+def _require_refine_search(name: str, v) -> float:
+    lo, hi = REFINE_SEARCH_RANGE
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not lo <= v <= hi:
+        raise ValueError(f"{name} must be a number in {lo}..{hi}, got {v!r}")
+    return float(v)
 
 
 def _require_roi_method(name: str, v) -> str:
@@ -216,6 +224,7 @@ class MeasurementParameters:
     profile_mode: str = "average"
     oversample_step: float = 0.1
     fine_window: int = 40
+    refine_search: float = 1.5
 
     def __post_init__(self) -> None:
         _require_bool("measurement_parameters.subpixel", self.subpixel)
@@ -223,6 +232,12 @@ class MeasurementParameters:
         _require_profile_mode("measurement_parameters.profile_mode", self.profile_mode)
         _require_oversample_step("measurement_parameters.oversample_step", self.oversample_step)
         _require_fine_window("measurement_parameters.fine_window", self.fine_window)
+        _require_refine_search("measurement_parameters.refine_search", self.refine_search)
+        if not self.refine_search < self.fine_window:
+            raise ValueError(
+                f"measurement_parameters.refine_search ({self.refine_search}) must be smaller than "
+                f"measurement_parameters.fine_window ({self.fine_window})"
+            )
 
     @staticmethod
     def from_dict(d: dict) -> "MeasurementParameters":
@@ -244,6 +259,9 @@ class MeasurementParameters:
                 "measurement_parameters.oversample_step", d.get("oversample_step", 0.1)
             ),
             fine_window=_require_fine_window("measurement_parameters.fine_window", d.get("fine_window", 40)),
+            refine_search=_require_refine_search(
+                "measurement_parameters.refine_search", d.get("refine_search", 1.5)
+            ),
         )
 
 

@@ -129,3 +129,26 @@ def test_measurement_parameters_invalid_fine_window_raises(value):
 def test_measurement_parameters_profile_override_is_validated():
     with pytest.raises(ValueError, match="profile_mode must be one of"):
         replace(_load(), profile_mode="tilted")
+
+
+@pytest.mark.unit
+def test_measurement_parameters_refine_search_defaults_and_loads():
+    assert _load().refine_search == 1.5
+    for mp in load_library(PROJECT_ROOT / "configs")["measurement_parameters_by_id"].values():
+        assert mp.refine_search == 1.5
+    assert _load("refine_search = 2.5\n").refine_search == 2.5
+    assert _load("refine_search = 3\n").refine_search == 3.0
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("value", ["0.4", "3.1", "0", "true", '"1.5"'])
+def test_measurement_parameters_invalid_refine_search_raises(value):
+    with pytest.raises(ValueError, match="refine_search must be a number in 0.5..3.0"):
+        _load(f"refine_search = {value}\n")
+
+
+@pytest.mark.unit
+def test_measurement_parameters_refine_search_must_be_below_fine_window():
+    assert _load("refine_search = 1.5\nfine_window = 2\n").fine_window == 2
+    with pytest.raises(ValueError, match="refine_search .* must be smaller than"):
+        _load("refine_search = 2.5\nfine_window = 2\n")

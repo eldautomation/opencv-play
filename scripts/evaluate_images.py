@@ -13,6 +13,7 @@ Turn on sub-pixel centering (R2) without editing the config files:
 
 Use the two-pass deskew profile (combinable with --subpixel):
     python3 scripts/evaluate_images.py --profile-mode deskew --oversample-step 0.1 --fine-window 40 --subpixel
+    python3 scripts/evaluate_images.py --profile-mode deskew --subpixel --refine-search 2.5
 
 Open the report in your Windows browser:
     explorer.exe "$(wslpath -w outputs/evaluation/latest/index.html)"
@@ -61,7 +62,7 @@ def mode_label(mp) -> str:
     readout = f"subpixel n={mp.subpixel_neighbors}" if mp.subpixel else "integer"
     label = f"{mp.profile_mode} / {readout}"
     if mp.profile_mode == "deskew":
-        label += f" (step {mp.oversample_step:g}, window {mp.fine_window})"
+        label += f" (step {mp.oversample_step:g}, window {mp.fine_window}, search {mp.refine_search:g})"
     return label
 
 
@@ -89,9 +90,10 @@ def evaluate(image_dir: Path, config_dir: Path, run_dir: Path, overrides: dict) 
         mp = app.get_measurement_parameters()
         logging.getLogger(__name__).warning(
             "Using crop_center=(%d, %d) crop_size=(%d, %d) roi_size=(%d, %d) subpixel=%s subpixel_neighbors=%d "
-            "profile_mode=%s oversample_step=%g fine_window=%d",
+            "profile_mode=%s oversample_step=%g fine_window=%d refine_search=%g",
             mp.crop_center_x, mp.crop_center_y, mp.crop_size_x, mp.crop_size_y, mp.roi_size_x, mp.roi_size_y,
             mp.subpixel, mp.subpixel_neighbors, mp.profile_mode, mp.oversample_step, mp.fine_window,
+            mp.refine_search,
         )
         mode = mode_label(mp)
         sensor = app.get_image_sensor()
@@ -240,6 +242,8 @@ def main() -> int:
                     help="Bin width of the deskewed profile in px, 0.02-0.5 (used with --profile-mode deskew)")
     ap.add_argument("--fine-window", type=int, metavar="PX",
                     help="Half-width of the deskewed profile in px (used with --profile-mode deskew)")
+    ap.add_argument("--refine-search", type=float, metavar="PX",
+                    help="Pass-2 search half-range in px, 0.5-3.0 (used with --profile-mode deskew)")
     args = ap.parse_args()
 
     overrides: dict = {}
@@ -259,6 +263,8 @@ def main() -> int:
         overrides.update(oversample_step=args.oversample_step)
     if args.fine_window is not None:
         overrides.update(fine_window=args.fine_window)
+    if args.refine_search is not None:
+        overrides.update(refine_search=args.refine_search)
 
     logging.basicConfig(level=logging.ERROR)
     logging.getLogger(__name__).setLevel(logging.WARNING)

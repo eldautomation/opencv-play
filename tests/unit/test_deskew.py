@@ -2,7 +2,13 @@
 import numpy as np
 import pytest
 
-from autocollimator.target_utils import _deskew_position, find_cross_center_detailed
+from autocollimator.target_utils import (
+    _deskew_position,
+    _deskew_profile,
+    _sdrm_core,
+    find_cross_center_detailed,
+    sdrm_ssd_curve,
+)
 
 ROW_REF_DEPTH = 20  # default roi_size_y
 TAN_3DEG = float(np.tan(np.radians(3.0)))
@@ -85,9 +91,50 @@ def test_deskew_position_interpolates_sparse_bins():
         ({"oversample_step": 0.6}, "oversample_step must be a number in 0.02..0.5"),
         ({"fine_window": 1}, "fine_window must be an int >= 2"),
         ({"fine_window": 40.0}, "fine_window must be an int >= 2"),
+        ({"refine_search": 0.4}, "refine_search must be a number in 0.5..3.0"),
+        ({"refine_search": 3.5}, "refine_search must be a number in 0.5..3.0"),
+        ({"refine_search": True}, "refine_search must be a number in 0.5..3.0"),
+        ({"refine_search": 2.5, "fine_window": 2}, "refine_search .* must be smaller than fine_window"),
     ],
 )
 def test_find_cross_center_rejects_invalid_profile_options(overrides, message):
     image = np.full((100, 100), 30.0)
     with pytest.raises(ValueError, match=message):
         find_cross_center_detailed(image, (50, 50), (60, 60), (60, 10), 0.5, **overrides)
+
+
+@pytest.mark.unit
+def test_deskew_position_default_search_is_1_5_px():
+    roi = _tilted_line_roi(100.3, TAN_3DEG)
+    assert _deskew(roi, 100.0, TAN_3DEG) == _deskew(roi, 100.0, TAN_3DEG, refine_search=1.5)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("refine_search", [0.5, 1.5, 2.5])
+def test_deskew_position_stays_within_refine_search(refine_search):
+    # Pass-1 estimate 2 px off: the result is limited to +/-refine_search around it.
+    roi = _tilted_line_roi(102.0, TAN_3DEG)
+    pos = _deskew(roi, 100.0, TAN_3DEG, subpixel=False, refine_search=refine_search)
+    assert pos is not None
+    assert abs(pos - 100.0) <= refine_search + 1e-9
+    if refine_search > 2.0:
+        assert abs(pos - 102.0) <= 0.05 + 1e-9
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("search", [5, 15, 30])
+def test_sdrm_ssd_curve_matches_core_minimum(search):
+    roi = _tilted_line_roi(100.37, TAN_3DEG)
+    profile, _empty = _deskew_profile(roi, 100.0, TAN_3DEG, oversample_step=0.1, fine_window=40, name="t")
+    ssd = sdrm_ssd_curve(profile, search)
+    assert ssd.shape == (2 * search + 1,)
+    k_core, r1 = _sdrm_core(profile, search)
+    assert int(np.argmin(ssd)) - search == k_core
+    rss = np.sqrt(ssd)
+    assert r1 == pytest.approx(rss.min() / rss.mean(), rel=1e-12)
+
+
+@pytest.mark.unit
+def test_sdrm_ssd_curve_rejects_short_profile():
+    with pytest.raises(ValueError, match="more than 2\\*search_size"):
+        sdrm_ssd_curve(np.ones(10), 5)

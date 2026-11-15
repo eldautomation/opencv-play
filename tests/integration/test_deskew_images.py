@@ -50,3 +50,20 @@ def test_deskew_succeeds_where_average_succeeds(name, subpixel, default_params):
     if deskew.center is not None:
         assert deskew.angles is not None
         assert set(deskew.roi_methods) <= {"deskew", "fallback"}
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("subpixel", [False, True])
+@pytest.mark.parametrize("name", ["blob-13.jpg", "blob-22.jpg"])
+def test_explicit_default_refine_search_is_identical(name, subpixel, default_params):
+    img = cv2.imread(str(IMAGE_DIR / name))
+    if img is None:
+        pytest.fail(f"Cannot read image: {name}")
+    default = find_cross_center_detailed(img, subpixel=subpixel, profile_mode="deskew", **default_params)
+    explicit = find_cross_center_detailed(
+        img, subpixel=subpixel, profile_mode="deskew", refine_search=1.5, **default_params
+    )
+    assert explicit.center == default.center
+    assert explicit.angles == default.angles
+    assert explicit.roi_methods == default.roi_methods
+    assert [t.pos2 for t in explicit.rois] == [t.pos2 for t in default.rois]
