@@ -38,7 +38,7 @@ precision with 3.45 µm pixels. Precision is the product — treat it as a first
 - Keep type hints accurate; return annotations must match what the function actually returns.
 - Do not add runtime dependencies without adding them to `pyproject.toml`.
 - Do not commit anything under `outputs/`.
-- Source files currently use CRLF line endings; preserve the existing ending in files you edit unless the task is line-ending normalization.
+- Source files use LF line endings (exceptions still in CRLF: `src/autocollimator/app.py`, `src/autocollimator/config/store.py`, `scripts/demo_app.py`); preserve the existing ending in files you edit unless the task is line-ending normalization.
 - Known review findings are tracked in `docs/code_review_2026-09.md` with IDs R1–R14. Reference those IDs in commit messages.
 - Always write `python3` (not `python`) in commands and documentation.
 
