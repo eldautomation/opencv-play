@@ -517,6 +517,177 @@ class QualityLimits:
             metric_tolerance=_require_float("quality_limits.metric_tolerance", d["metric_tolerance"]),
         )
 
+
+# Pre-search (R4): when the measurement runs it, what it does when it fails, how it reports.
+PRESEARCH_MODES = ("off", "every_image", "track")
+PRESEARCH_FAILURE_ACTIONS = ("use_configured_crop", "fail")
+PRESEARCH_METHODS = ("sdrm_full_frame", "projection")
+# A candidate's line: "vertical" (position is x) or "horizontal" (position is y).
+PRESEARCH_LINES = ("vertical", "horizontal")
+# Where the crop used for a measurement came from.
+CROP_SOURCES = ("configured", "presearch", "tracked")
+PRESEARCH_CROP_FRACTION_RANGE = (0.1, 1.0)
+
+
+def _require_choice(name: str, v, choices: tuple[str, ...]) -> str:
+    if v not in choices:
+        raise ValueError(f"{name} must be one of {choices}, got {v!r}")
+    return v
+
+
+def _require_positive_int(name: str, v, minimum: int = 1) -> int:
+    if isinstance(v, bool) or not isinstance(v, int) or v < minimum:
+        raise ValueError(f"{name} must be an int >= {minimum}, got {v!r}")
+    return v
+
+
+def _require_number_in(name: str, v, lo: float, hi: float, *, lo_open: bool = False) -> float:
+    ok = not isinstance(v, bool) and isinstance(v, (int, float)) and (lo < v if lo_open else lo <= v) and v <= hi
+    if not ok:
+        bracket = "(" if lo_open else "["
+        raise ValueError(f"{name} must be a number in {bracket}{lo}, {hi}], got {v!r}")
+    return float(v)
+
+
+@dataclass(frozen=True)
+class PresearchParameters:
+    """
+    Pre-search settings (R4), optional in TOML as [measurement_parameters.presearch].
+
+    ``presearch_mode``: "off" (default; the configured crop is used and the pre-search is not
+    run), "every_image" (pre-search each image, measure with the recommended crop) or "track"
+    (measure around the previous successful center; pre-search when there is none or that
+    measurement fails). ``presearch_failure_action``: "use_configured_crop" (default) or
+    "fail" when the pre-search fails inside a measurement.
+    """
+
+    presearch_mode: str = "off"
+    presearch_failure_action: str = "use_configured_crop"
+    # The image is downsampled by this factor before searching.
+    presearch_downsample: int = 2
+    # Recommended region size = fraction x min(image width, image height) ...
+    presearch_crop_fraction: float = 0.5
+    # ... but never smaller than this (and never smaller than 4 x the line FWHM).
+    min_crop_size_px: int = 240
+    # RSS-ratio limit for the pre-search; separate from quality_limits.rss_ratio.
+    presearch_q_limit: float = 0.7
+    # The validation pass must agree with the pre-search center within this distance (px).
+    presearch_agreement_px: float = 5.0
+    # A second candidate line at least this fraction of the strongest's strength is warned about.
+    presearch_ambiguity_ratio: float = 0.8
+
+    def __post_init__(self) -> None:
+        p = "measurement_parameters.presearch"
+        _require_choice(f"{p}.presearch_mode", self.presearch_mode, PRESEARCH_MODES)
+        _require_choice(f"{p}.presearch_failure_action", self.presearch_failure_action, PRESEARCH_FAILURE_ACTIONS)
+        _require_positive_int(f"{p}.presearch_downsample", self.presearch_downsample)
+        _require_number_in(f"{p}.presearch_crop_fraction", self.presearch_crop_fraction, *PRESEARCH_CROP_FRACTION_RANGE)
+        _require_positive_int(f"{p}.min_crop_size_px", self.min_crop_size_px)
+        _require_number_in(f"{p}.presearch_q_limit", self.presearch_q_limit, 0.0, 1.0, lo_open=True)
+        if not self.presearch_q_limit < 1.0:
+            raise ValueError(f"{p}.presearch_q_limit must be < 1, got {self.presearch_q_limit!r}")
+        _require_number_in(f"{p}.presearch_agreement_px", self.presearch_agreement_px, 0.0, float("inf"), lo_open=True)
+        _require_number_in(f"{p}.presearch_ambiguity_ratio", self.presearch_ambiguity_ratio, 0.0, 1.0, lo_open=True)
+
+    @staticmethod
+    def from_dict(d: dict) -> "PresearchParameters":
+        unknown = sorted(set(d) - set(PresearchParameters.__dataclass_fields__))
+        if unknown:
+            raise ValueError(f"measurement_parameters.presearch: unknown key(s) {unknown}")
+        return PresearchParameters(**d)
+
+
+@dataclass(frozen=True)
+class PresearchCandidate:
+    """A line found by the pre-search; ``position`` is x for "vertical", y for "horizontal" (px)."""
+
+    line: str
+    position: float
+    # Peak height of the line's projection profile above its background (gray levels).
+    strength: float
+
+    def __post_init__(self) -> None:
+        _require_choice("presearch_candidate.line", self.line, PRESEARCH_LINES)
+
+    @staticmethod
+    def from_dict(d: dict) -> "PresearchCandidate":
+        return PresearchCandidate(
+            line=_require_str("presearch_candidate.line", d["line"]),
+            position=_require_float("presearch_candidate.position", d["position"]),
+            strength=_require_float("presearch_candidate.strength", d["strength"]),
+        )
+
+
+@dataclass(frozen=True)
+class PresearchResult:
+    """
+    Result of the pre-search (``autocollimator.presearch.presearch``). All positions and sizes
+    are in full-resolution image pixels.
+
+    On success the recommended square region (center, size) is set and ``failure_reason`` is
+    None. On failure ``failure_reason`` says why and no region is recommended; ``position``
+    may still hold the estimate that failed a check.
+    """
+
+    success: bool
+    failure_reason: Optional[str]
+    # "sdrm_full_frame" | "projection"; None when no method produced a position.
+    method_used: Optional[str]
+    # Estimated crosshair center.
+    position_x: Optional[float]
+    position_y: Optional[float]
+    recommended_center_x: Optional[int]
+    recommended_center_y: Optional[int]
+    recommended_size: Optional[int]
+    # sdrm_full_frame: one RSS ratio per strip (top, bottom, right, left);
+    # projection: one per line (vertical, horizontal).
+    q_values: tuple[float, ...] = ()
+    line_fwhm_px: Optional[float] = None
+    warnings: tuple[str, ...] = ()
+    candidates: tuple[PresearchCandidate, ...] = ()
+    region_shifted: bool = False
+    region_shrunk: bool = False
+    downsample: int = 1
+
+    def __post_init__(self) -> None:
+        _require_bool("presearch_result.success", self.success)
+        if self.method_used is not None:
+            _require_choice("presearch_result.method_used", self.method_used, PRESEARCH_METHODS)
+        if self.success:
+            missing = [
+                name
+                for name in ("method_used", "position_x", "position_y", "recommended_center_x",
+                             "recommended_center_y", "recommended_size")
+                if getattr(self, name) is None
+            ]
+            if missing:
+                raise ValueError(f"presearch_result: {', '.join(missing)} cannot be None when success is True")
+            if self.failure_reason is not None:
+                raise ValueError("presearch_result: failure_reason must be None when success is True")
+        elif not (isinstance(self.failure_reason, str) and self.failure_reason.strip()):
+            raise ValueError("presearch_result: a failed result needs a failure_reason")
+
+    @staticmethod
+    def from_dict(d: dict) -> "PresearchResult":
+        return PresearchResult(
+            success=_require_bool("presearch_result.success", d["success"]),
+            failure_reason=_opt_str("presearch_result.failure_reason", d.get("failure_reason")),
+            method_used=_opt_str("presearch_result.method_used", d.get("method_used")),
+            position_x=_opt_float("presearch_result.position_x", d.get("position_x")),
+            position_y=_opt_float("presearch_result.position_y", d.get("position_y")),
+            recommended_center_x=_opt_int("presearch_result.recommended_center_x", d.get("recommended_center_x")),
+            recommended_center_y=_opt_int("presearch_result.recommended_center_y", d.get("recommended_center_y")),
+            recommended_size=_opt_int("presearch_result.recommended_size", d.get("recommended_size")),
+            q_values=tuple(_require_float("presearch_result.q_values", q) for q in d.get("q_values", ())),
+            line_fwhm_px=_opt_float("presearch_result.line_fwhm_px", d.get("line_fwhm_px")),
+            warnings=tuple(_require_str("presearch_result.warnings", w) for w in d.get("warnings", ())),
+            candidates=tuple(PresearchCandidate.from_dict(c) for c in d.get("candidates", ())),
+            region_shifted=_require_bool("presearch_result.region_shifted", d.get("region_shifted", False)),
+            region_shrunk=_require_bool("presearch_result.region_shrunk", d.get("region_shrunk", False)),
+            downsample=_require_int("presearch_result.downsample", d.get("downsample", 1)),
+        )
+
+
 @dataclass(frozen=True)
 class MeasuredValues:
     # Position and angles are None only when success is False.
