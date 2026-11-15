@@ -1312,7 +1312,8 @@ class CrossCenterResult:
     # One RSS ratio per ROI, in ROI_NAMES order (always from pass 1).
     q_ratio_list: list[float]
     # Profile method per ROI, in ROI_NAMES order: "average", "deskew", or a pass-1 fallback
-    # "fallback:tilt", "fallback:bins", "fallback:edge", "fallback:shift" (see _deskew_position).
+    # "fallback:tilt", "fallback:bins", "fallback:edge", "fallback:shift" (see _deskew_position);
+    # "not_run" for all ROIs when pass 1 failed.
     roi_methods: tuple[str, ...]
     # Intermediate values per ROI, in ROI_NAMES order.
     rois: tuple[RoiTrace, ...] = ()
@@ -1978,7 +1979,8 @@ def find_cross_center_detailed(
     if measure_fail: 
         LOGGER.warning(f"Quality too low for reliable center finding: - No center computed")
         return CrossCenterResult(
-            None, None, overlay, q_ratio_list, roi_methods_tuple, roi_traces, saturation_tuple, windows_tuple
+            None, None, overlay, q_ratio_list, ("not_run",) * len(ROI_NAMES), roi_traces, saturation_tuple,
+            windows_tuple,
         )
 
     # Combine centers

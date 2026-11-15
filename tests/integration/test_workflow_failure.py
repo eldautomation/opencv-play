@@ -46,6 +46,7 @@ def test_quality_failure_is_reported_as_failure(tmp_path: Path) -> None:
     )
     assert mv.center_position_x is None and mv.center_position_y is None
     assert mv.measured_angle_a0 is None and mv.measured_angle_a1 is None
+    assert (mv.roi_method_m0, mv.roi_method_m1, mv.roi_method_m2, mv.roi_method_m3) == ("not_run",) * 4
     # right and left ROIs exceed the default rss_ratio limit (0.5) on blob-09.
     assert "right (rss_ratio" in mv.message and "left (rss_ratio" in mv.message, mv.message
     assert "top (rss_ratio" not in mv.message and "bottom (rss_ratio" not in mv.message, mv.message
@@ -66,3 +67,4 @@ def test_failed_measurement_can_be_saved_and_reloaded(tmp_path: Path) -> None:
     assert reloaded == result.measured_values
     assert reloaded.success is False
     assert reloaded.center_position_x is None
+    assert reloaded.roi_method_m0 == "not_run"

@@ -153,6 +153,15 @@ def test_saturation_is_reported_on_failed_measurement():
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("profile_mode", ["average", "deskew"])
+def test_roi_methods_are_not_run_when_pass_1_fails(profile_mode):
+    noise = np.random.default_rng(21).integers(0, 200, size=IMAGE_SHAPE, dtype=np.uint8)
+    result = find_cross_center_detailed(noise, **CROSS_KW, profile_mode=profile_mode)
+    assert result.center is None
+    assert result.roi_methods == ("not_run",) * 4
+
+
+@pytest.mark.unit
 def test_saturation_warning_above_one_percent(caplog):
     bgr, area = _bgr_cross_with_hot_pixels(n_red=150, n_green=50, n_249=0)
     assert 200 / area > 0.01

@@ -124,6 +124,23 @@ def test_measured_values_legacy_plain_fallback_still_loads():
 
 
 @pytest.mark.unit
+def test_measured_values_not_run_round_trip():
+    failed = dict(_values(success=False, message="quality check failed"), **dict.fromkeys(OPTIONAL_FIELDS))
+    mv = MeasuredValues(**failed, **dict.fromkeys(ROI_METHOD_FIELDS, "not_run"))
+    assert MeasuredValues.from_dict(dataclasses.asdict(mv)) == mv
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("legacy", [{}, dict.fromkeys(ROI_METHOD_FIELDS, "average")])
+def test_failed_measurement_with_legacy_roi_methods_still_loads(legacy):
+    # Failed measurements were recorded as "average" (or without roi_method_*) before "not_run".
+    failed = dict(_values(success=False, message="quality check failed"), **dict.fromkeys(OPTIONAL_FIELDS))
+    mv = MeasuredValues.from_dict(dict(failed, **legacy))
+    assert mv.success is False
+    assert all(getattr(mv, name) == "average" for name in ROI_METHOD_FIELDS)
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize("value", ["fallback:", "fallback:other"])
 def test_measured_values_unknown_fallback_reason_raises(value):
     with pytest.raises(ValueError, match="roi_method_m1 must be one of"):

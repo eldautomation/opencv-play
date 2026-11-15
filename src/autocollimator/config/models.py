@@ -64,10 +64,12 @@ FINE_WINDOW_MODES = ("fixed", "adaptive")
 OVERSAMPLE_STEP_RANGE = (0.02, 0.5)
 REFINE_SEARCH_RANGE = (0.5, 3.0)
 MAX_REFINE_SHIFT_RANGE = (0.1, 3.0)
-# Per-ROI profile method recorded in MeasuredValues. Plain "fallback" was written before the
-# fallback reasons were recorded; it is accepted so older measurement files still load.
+# Per-ROI profile method recorded in MeasuredValues. "not_run": pass 1 failed, so no profile
+# method applies. Plain "fallback" was written before the fallback reasons were recorded, and
+# failed measurements were recorded as "average" before "not_run"; both still load.
 ROI_METHODS = (
     "average",
+    "not_run",
     "deskew",
     "fallback:tilt",
     "fallback:bins",

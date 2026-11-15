@@ -167,4 +167,4 @@ def test_deskew_does_not_run_when_pass_1_fails():
     params = dict(PARAMS, q_limit=0.01)
     result = find_cross_center_detailed(img, **params, profile_mode="deskew")
     assert result.center is None and result.angles is None
-    assert result.roi_methods == ("average",) * 4
+    assert result.roi_methods == ("not_run",) * 4
