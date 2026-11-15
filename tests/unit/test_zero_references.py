@@ -51,8 +51,6 @@ def _output(app: AutocollimatorApp, x=1000.25, y=500.5, a0=1.43, a1=1.43, succes
         measurement_name="m",
         image_name="i",
         image_hash="0" * 32,
-        output_units="Pixels",
-        pixel_to_unit_scale_factor=1,
     )
 
 

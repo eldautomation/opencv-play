@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from enum import Enum
 from pathlib import Path
 from typing import Any
 import os
@@ -63,6 +64,11 @@ def _save_yaml(path: Path, data: dict) -> None:
 
     with path.open("w", encoding="utf-8") as f:
         yaml.safe_dump(data, f, sort_keys=False)
+
+
+def _yaml_safe_dict(items: list[tuple[str, Any]]) -> dict[str, Any]:
+    """dict_factory for asdict: store Enums (units, modes, reticle type) by their config value."""
+    return {k: (v.value if isinstance(v, Enum) else v) for k, v in items}
 
 
 def _index_by_id(items: list, id_attr: str) -> dict[str, Any]:
@@ -617,7 +623,7 @@ def save_measurement_output(
     # Current schema does not store image paths, only hashes and metadata,
     # so we keep the measurement as-is and write it after images are saved.
     # The device encryption key is a secret and is never written (R6).
-    data = asdict(measurement)
+    data = asdict(measurement, dict_factory=_yaml_safe_dict)
     data["hardware"]["device"].pop("encryption_key", None)
     _save_yaml(measurement_path, data)
 

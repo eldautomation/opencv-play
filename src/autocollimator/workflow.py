@@ -21,11 +21,13 @@ from autocollimator.config.models import (
     MeasurementOutput,
 )
 
+from autocollimator.instrument import check_image_size, to_angular
 from autocollimator.target_utils import(
     ROI_NAMES,
     find_cross_center_detailed,
     image_md5
 )
+from autocollimator.units import OutputUnits
 
 if TYPE_CHECKING:
     from autocollimator.app import AutocollimatorApp
@@ -126,9 +128,13 @@ def run_center_finding_on_image(
     *,
     debug: bool = False,
     debug_prefix: str | Path | None = None,
-) -> MeasurementOutput:
+    units: OutputUnits | None = None,
+) -> tuple[MeasurementOutput, np.ndarray]:
     """
     Run the center-finding workflow on an input image.
+
+    Composes image -> image measurement (MeasuredValues, pixels) -> angular measurement
+    (instrument.to_angular) -> MeasurementOutput with an InstrumentModel snapshot.
 
     Parameters
     ----------
@@ -146,11 +152,13 @@ def run_center_finding_on_image(
         Whether debug outputs should be generated.
     debug_prefix:
         Optional file prefix for debug artifacts.
+    units:
+        Output units for the angular measurement; None uses the device defaults.
 
     Returns
     -------
-    MeasurementOutput
-        Structured workflow result.
+    tuple[MeasurementOutput, np.ndarray]
+        Structured workflow result and the overlay image.
 
     Raises
     ------
@@ -158,6 +166,9 @@ def run_center_finding_on_image(
         If the app is not started.
     TypeError, ValueError
         If inputs are invalid.
+    ImageSizeMismatchError
+        If the image size differs from the capture mode's output size and the device's
+        image_size_mismatch policy is "error".
     """
 
 
@@ -165,6 +176,12 @@ def run_center_finding_on_image(
         raise RuntimeError("Application is not started. Call startup() first.")
 
     image = _validate_image(image)
+    image_height, image_width = image.shape[:2]
+
+    model = app.get_instrument_model()
+    if units is None:
+        units = app.get_output_units()
+    check_image_size(model, image_width, image_height)
 
     # pull values out of measurement parameters, for validation
 
@@ -316,6 +333,19 @@ def run_center_finding_on_image(
         fine_window_used_f1 = result.fine_windows[1],
         fine_window_used_f2 = result.fine_windows[2],
         fine_window_used_f3 = result.fine_windows[3],
+        image_width = image_width,
+        image_height = image_height,
+    )
+    angular_measurement = to_angular(measured_values, model, units)
+    LOGGER.info(
+        "Angular result success=%s tilt=(%s, %s) %s rotation=%s orthogonality=%s %s",
+        angular_measurement.success,
+        angular_measurement.tilt_x,
+        angular_measurement.tilt_y,
+        units.tilt_unit.value,
+        angular_measurement.rotation,
+        angular_measurement.orthogonality,
+        units.rotation_unit.value,
     )
     recommendations = Recommendations(
         updated_brightness=0,
@@ -336,8 +366,8 @@ def run_center_finding_on_image(
         measurement_name = "Measurement_Placeholder",
         image_name = "Image_Placeholder",
         image_hash = image_hash,
-        output_units = "Pixels",
-        pixel_to_unit_scale_factor = 1,
+        angular_measurement = angular_measurement,
+        instrument_model = model,
     )
 
     return measurement_output, overlay_image

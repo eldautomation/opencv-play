@@ -7,6 +7,8 @@ from typing import Optional
 
 from autocollimator.instrument import (
     IMAGE_SIZE_MISMATCH_POLICIES,
+    AngularMeasurement,
+    InstrumentModel,
     ReticleType,
     RotationZeroMode,
     RotationZeroReference,
@@ -642,6 +644,8 @@ class MeasurementHardware:
     source_optics: SourceOptics
     detect_optics: DetectOptics
     io_hardware: IOHardware
+    # None in records written before capture modes existed.
+    capture_mode: Optional[CaptureMode] = None
 
     @staticmethod
     def from_dict(d: dict) -> "MeasurementHardware":
@@ -651,11 +655,21 @@ class MeasurementHardware:
             source_optics=SourceOptics.from_dict(d["source_optics"]),
             detect_optics=DetectOptics.from_dict(d["detect_optics"]),
             io_hardware=IOHardware.from_dict(d["io_hardware"]),
+            capture_mode=CaptureMode.from_dict(d["capture_mode"]) if d.get("capture_mode") else None,
         )
 
 
 @dataclass(frozen=True)
 class MeasurementOutput:
+    """
+    One measurement: the image measurement (``measured_values``, pixel domain), the
+    instrument measurement derived from it (``angular_measurement``) and a snapshot of the
+    ``instrument_model`` used for the conversion.
+
+    Records written before Phase F have no angular measurement or instrument model (None);
+    their ``output_units`` / ``pixel_to_unit_scale_factor`` keys are ignored on load.
+    """
+
     hardware: MeasurementHardware
     measurement_parameters: MeasurementParameters
     quality_limits: QualityLimits
@@ -664,8 +678,8 @@ class MeasurementOutput:
     measurement_name: str
     image_name: str
     image_hash: str
-    output_units: str
-    pixel_to_unit_scale_factor: float
+    angular_measurement: Optional[AngularMeasurement] = None
+    instrument_model: Optional[InstrumentModel] = None
 
     @staticmethod
     def from_dict(d: dict) -> "MeasurementOutput":
@@ -678,10 +692,11 @@ class MeasurementOutput:
             measurement_name=_require_str("measurement_output.measurement_name",d["measurement_name"]),
             image_name=_require_str("measurement_output.image_name", d["image_name"]),
             image_hash=_require_str("measurement_output.image_hash", d["image_hash"]),
-            output_units=_require_str("measurement_output.output_units", d["output_units"]),
-            pixel_to_unit_scale_factor=_require_float(
-                "measurement_output.pixel_to_unit_scale_factor",
-                d["pixel_to_unit_scale_factor"],
+            angular_measurement=(
+                AngularMeasurement.from_dict(d["angular_measurement"]) if d.get("angular_measurement") else None
+            ),
+            instrument_model=(
+                InstrumentModel.from_dict(d["instrument_model"]) if d.get("instrument_model") else None
             ),
         )
 

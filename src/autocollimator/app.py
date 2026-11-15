@@ -466,6 +466,7 @@ class AutocollimatorApp:
             source_optics=self.get_source_optics(),
             detect_optics=self.get_detect_optics(),
             io_hardware=self.get_io_hardware(),
+            capture_mode=self.get_capture_mode(),
         )
 
 
@@ -479,22 +480,25 @@ class AutocollimatorApp:
         *,
         debug: bool = False,
         debug_prefix: str | Path | None = None,
+        tilt_unit: AngleUnit | str | None = None,
+        rotation_unit: AngleUnit | str | None = None,
     ) -> tuple[MeasurementOutput, np.ndarray]:
         """
         User-facing wrapper for the center-finding workflow.
+
+        ``tilt_unit`` / ``rotation_unit`` override the device's default output units for this call.
+        Raises ImageSizeMismatchError if the image size differs from the capture mode's output
+        size and the device's image_size_mismatch policy is "error".
         """
         if not self.is_started:
             raise RuntimeError("Application is not started. Call startup() first.")
-
-        # mps = self.get_measurement_parameters()
-    
-        # print(f"measurement parameters are: \n{mps}")
 
         return workflow_run_center_finding_on_image(
             app=self,
             image=image,
             debug=debug,
             debug_prefix=debug_prefix,
+            units=self.get_output_units(tilt_unit=tilt_unit, rotation_unit=rotation_unit),
         )
     
     def save_measurement_output(
