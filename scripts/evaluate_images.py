@@ -2,14 +2,17 @@
 Run center finding on every image in a folder and build a browsable HTML report.
 
 Usage (from the project root, with .venv active):
-    python scripts/evaluate_images.py
-    python scripts/evaluate_images.py --images tests/assets/images --out outputs/evaluation
+    python3 scripts/evaluate_images.py
+    python3 scripts/evaluate_images.py --images tests/assets/images --out outputs/evaluation
 
 Try a different crop box without editing the config files:
-    python scripts/evaluate_images.py --crop-center 960 540 --crop-size 1400 900
+    python3 scripts/evaluate_images.py --crop-center 960 540 --crop-size 1400 900
 
 Turn on sub-pixel centering (R2) without editing the config files:
-    python scripts/evaluate_images.py --subpixel --subpixel-neighbors 2
+    python3 scripts/evaluate_images.py --subpixel --subpixel-neighbors 2
+
+Use the two-pass deskew profile (combinable with --subpixel):
+    python3 scripts/evaluate_images.py --profile-mode deskew --oversample-step 0.1 --fine-window 40 --subpixel
 
 Open the report in your Windows browser:
     explorer.exe "$(wslpath -w outputs/evaluation/latest/index.html)"
@@ -53,6 +56,15 @@ def fmt(v, digits: int = 2) -> str:
     return "" if v is None else f"{v:.{digits}f}"
 
 
+def mode_label(mp) -> str:
+    """Profile mode and SDRM read-out, e.g. 'deskew / subpixel n=2' or 'average / integer'."""
+    readout = f"subpixel n={mp.subpixel_neighbors}" if mp.subpixel else "integer"
+    label = f"{mp.profile_mode} / {readout}"
+    if mp.profile_mode == "deskew":
+        label += f" (step {mp.oversample_step:g}, window {mp.fine_window})"
+    return label
+
+
 def apply_overrides(app: AutocollimatorApp, overrides: dict) -> None:
     """Replace the active measurement parameters in memory (config files are not changed)."""
     if not overrides:
@@ -76,13 +88,15 @@ def evaluate(image_dir: Path, config_dir: Path, run_dir: Path, overrides: dict) 
         apply_overrides(app, overrides)
         mp = app.get_measurement_parameters()
         logging.getLogger(__name__).warning(
-            "Using crop_center=(%d, %d) crop_size=(%d, %d) roi_size=(%d, %d) subpixel=%s subpixel_neighbors=%d",
+            "Using crop_center=(%d, %d) crop_size=(%d, %d) roi_size=(%d, %d) subpixel=%s subpixel_neighbors=%d "
+            "profile_mode=%s oversample_step=%g fine_window=%d",
             mp.crop_center_x, mp.crop_center_y, mp.crop_size_x, mp.crop_size_y, mp.roi_size_x, mp.roi_size_y,
-            mp.subpixel, mp.subpixel_neighbors,
+            mp.subpixel, mp.subpixel_neighbors, mp.profile_mode, mp.oversample_step, mp.fine_window,
         )
+        mode = mode_label(mp)
         sensor = app.get_image_sensor()
         for path in images:
-            row: dict = {"file": path.name, "expected": manifest.get(path.name, {}).get("expect", "")}
+            row: dict = {"file": path.name, "expected": manifest.get(path.name, {}).get("expect", ""), "mode": mode}
             row["notes"] = manifest.get(path.name, {}).get("notes", "")
             img = cv2.imread(str(path))
             if img is None:
@@ -114,6 +128,8 @@ def evaluate(image_dir: Path, config_dir: Path, run_dir: Path, overrides: dict) 
             row["a0"], row["a1"] = mv.measured_angle_a0, mv.measured_angle_a1
             q = [mv.rss_ratio_r0, mv.rss_ratio_r1, mv.rss_ratio_r2, mv.rss_ratio_r3]
             row["q"] = dict(zip(ROI_NAMES, q))
+            methods = [mv.roi_method_m0, mv.roi_method_m1, mv.roi_method_m2, mv.roi_method_m3]
+            row["methods"] = " ".join(f"{name}:{m}" for name, m in zip(ROI_NAMES, methods))
             row["message"] = mv.message
 
             overlay_name = f"{path.stem}.jpg"
@@ -129,7 +145,7 @@ def evaluate(image_dir: Path, config_dir: Path, run_dir: Path, overrides: dict) 
 
 def write_csv(rows: list[dict], path: Path) -> None:
     fields = ["file", "size", "status", "reported_success", "expected", "match", "x", "y",
-              "a0", "a1", "q_top", "q_bottom", "q_right", "q_left", "ms", "message", "notes"]
+              "a0", "a1", "q_top", "q_bottom", "q_right", "q_left", "mode", "methods", "ms", "message", "notes"]
     with path.open("w", newline="", encoding="utf-8") as f:
         wr = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         wr.writeheader()
@@ -171,6 +187,7 @@ def write_html(rows: list[dict], path: Path, title: str, q_limit: float) -> None
             f"<td><b>{status}</b>{flag}</td><td>{html.escape(str(r.get('expected', '')))}</td>"
             f"<td>{r.get('match', '')}</td><td>{fmt(r.get('x'))}</td><td>{fmt(r.get('y'))}</td>"
             f"<td>{fmt(r.get('a0'), 3)}</td><td>{fmt(r.get('a1'), 3)}</td>{q_cells(r)}"
+            f"<td>{html.escape(r.get('mode', ''))}</td><td class='methods'>{html.escape(r.get('methods', ''))}</td>"
             f"<td>{r.get('ms', '')}</td><td class='msg'>{html.escape(str(r.get('message', '')))}"
             f"<br><i>{html.escape(str(r.get('notes', '')))}</i></td></tr>"
         )
@@ -188,6 +205,7 @@ def write_html(rows: list[dict], path: Path, title: str, q_limit: float) -> None
  td.bad {{ background: #fde2e1; }}
  .warn {{ color: #b36b00; font-weight: bold; }}
  .msg {{ max-width: 280px; }}
+ .methods {{ max-width: 140px; }}
 </style></head><body>
 <h1>{html.escape(title)}</h1>
 <p><b>{n_ok}/{len(rows)}</b> centers found &middot; <b>{n_mismatch}</b> mismatches vs manifest
@@ -195,7 +213,7 @@ def write_html(rows: list[dict], path: Path, title: str, q_limit: float) -> None
  Click a thumbnail for the full overlay (blue = crop, yellow = ROIs, green = ROI centers, red = crosshair center).</p>
 <table><tr><th>Overlay</th><th>File</th><th>Size</th><th>Result</th><th>Expected</th><th>Match</th>
 <th>x</th><th>y</th><th>a0</th><th>a1</th><th>q top</th><th>q bottom</th><th>q right</th><th>q left</th>
-<th>ms</th><th>Message / notes</th></tr>
+<th>Mode</th><th>ROI methods</th><th>ms</th><th>Message / notes</th></tr>
 {''.join(body)}
 </table></body></html>"""
     path.write_text(page, encoding="utf-8")
@@ -216,6 +234,12 @@ def main() -> int:
                     help="Refine SDRM offsets to sub-pixel precision (measurement_parameters.subpixel)")
     ap.add_argument("--subpixel-neighbors", type=int, metavar="N",
                     help="Points on each side of the minimum for the sub-pixel fit, 1-3 (used with --subpixel)")
+    ap.add_argument("--profile-mode", choices=("average", "deskew"),
+                    help="How each ROI profile is built (measurement_parameters.profile_mode)")
+    ap.add_argument("--oversample-step", type=float, metavar="PX",
+                    help="Bin width of the deskewed profile in px, 0.02-0.5 (used with --profile-mode deskew)")
+    ap.add_argument("--fine-window", type=int, metavar="PX",
+                    help="Half-width of the deskewed profile in px (used with --profile-mode deskew)")
     args = ap.parse_args()
 
     overrides: dict = {}
@@ -229,6 +253,12 @@ def main() -> int:
         overrides.update(subpixel=True)
     if args.subpixel_neighbors is not None:
         overrides.update(subpixel_neighbors=args.subpixel_neighbors)
+    if args.profile_mode:
+        overrides.update(profile_mode=args.profile_mode)
+    if args.oversample_step is not None:
+        overrides.update(oversample_step=args.oversample_step)
+    if args.fine_window is not None:
+        overrides.update(fine_window=args.fine_window)
 
     logging.basicConfig(level=logging.ERROR)
     logging.getLogger(__name__).setLevel(logging.WARNING)
