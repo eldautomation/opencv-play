@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from autocollimator.target_utils import _sdrm_core, sdrm_2
+from autocollimator.target_utils import _sdrm_core, _sdrm_core_detail, sdrm_2
 
 Q_LIMIT = 0.5
 
@@ -112,3 +112,14 @@ def test_sdrm_core_offsets_are_in_samples():
     assert k_int == 4
     k, _ = _sdrm_core(values, 15, subpixel=True, subpixel_neighbors=3)
     assert abs(k - 3.7) < 0.05
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("subpixel", [False, True])
+@pytest.mark.parametrize("shift", [-3.3, -0.4, 0.3, 3.3])
+def test_sdrm_core_detail_reports_integer_minimum(shift, subpixel):
+    values = _profile(shift)
+    offset, r1, k_int = _sdrm_core_detail(values, 3, subpixel=subpixel)
+    assert (offset, r1) == _sdrm_core(values, 3, subpixel=subpixel)
+    assert k_int == _sdrm_core(values, 3)[0]
+    assert -3 <= k_int <= 3

@@ -56,6 +56,7 @@ def main() -> int:
     ap.add_argument("--oversample-step", type=float, metavar="PX")
     ap.add_argument("--fine-window", type=int, metavar="PX")
     ap.add_argument("--refine-search", type=float, metavar="PX")
+    ap.add_argument("--max-refine-shift", type=float, metavar="PX")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.ERROR)
@@ -67,7 +68,7 @@ def main() -> int:
     overrides: dict = {"profile_mode": "deskew"}
     if args.subpixel:
         overrides["subpixel"] = True
-    for key in ("subpixel_neighbors", "oversample_step", "fine_window", "refine_search"):
+    for key in ("subpixel_neighbors", "oversample_step", "fine_window", "refine_search", "max_refine_shift"):
         if getattr(args, key) is not None:
             overrides[key] = getattr(args, key)
 
@@ -92,6 +93,7 @@ def main() -> int:
         oversample_step=mp.oversample_step,
         fine_window=mp.fine_window,
         refine_search=mp.refine_search,
+        max_refine_shift=mp.max_refine_shift,
     )
 
     step = mp.oversample_step
@@ -99,7 +101,8 @@ def main() -> int:
     wide = int(round(PLOT_RANGE_PX / step))
     readout = f"subpixel n={mp.subpixel_neighbors}" if mp.subpixel else "integer"
     print(f"{args.image.name}: deskew / {readout}, oversample_step={step:g}, fine_window={mp.fine_window}, "
-          f"refine_search={mp.refine_search:g} px (= +/-{search} samples), q_limit={q_limit:g}")
+          f"refine_search={mp.refine_search:g} px (= +/-{search} samples), "
+          f"max_refine_shift={mp.max_refine_shift:g} px, q_limit={q_limit:g}")
     for label, r in (("average", average), ("deskew ", deskew)):
         c = r.center or (None, None)
         a = r.angles or (None, None)
@@ -112,7 +115,7 @@ def main() -> int:
         return 1
 
     print()
-    print(f"  {'ROI':<7}{'axis':<5}{'method':<9}{'slope':>9}{'pass1':>11}{'pass2':>11}{'diff':>8}"
+    print(f"  {'ROI':<7}{'axis':<5}{'method':<16}{'slope':>9}{'pass1':>11}{'pass2':>11}{'diff':>8}"
           f"{'min idx':>10}{'':>6}{'min +/-3px':>12}  plot")
     for trace, method in zip(deskew.rois, deskew.roi_methods):
         axis, origin = axis_origin(trace)
@@ -121,11 +124,10 @@ def main() -> int:
         diff = None if p2 is None else p2 - p1
         idx_txt, flag, global_txt, plot_txt = "-", "", "-", "-"
 
-        deskewed = None if trace.slope is None else _deskew_profile(
+        profile = None if trace.slope is None else _deskew_profile(
             trace.roi, trace.pos1, trace.slope, oversample_step=step, fine_window=mp.fine_window, name=trace.name
-        )
-        if deskewed is not None:
-            profile, _empty = deskewed
+        )[0]
+        if profile is not None:
             ssd = sdrm_ssd_curve(profile, search)
             k_min = int(np.argmin(ssd)) - search
             k_core, _r1 = _sdrm_core(profile, search)
@@ -142,8 +144,9 @@ def main() -> int:
             ax.plot(offsets_px, np.sqrt(ssd_wide), color="tab:blue", lw=1.2, label="fine RSS")
             ax.axvline(0.0, color="tab:gray", ls="--", lw=1, label="pass-1 estimate")
             if diff is not None:
+                chosen = "chosen minimum" if method == "deskew" else f"rejected minimum, {method}"
                 ax.axvline(trace.pos2 - trace.pos1, color="tab:red", lw=1.5,
-                           label=f"chosen minimum ({diff:+.3f} px)")
+                           ls="-" if method == "deskew" else ":", label=f"{chosen} ({diff:+.3f} px)")
             ax.set_xlabel(f"offset from pass-1 estimate along {axis} (px)")
             ax.set_ylabel("RSS")
             ax.set_title(f"{args.image.stem} {trace.name}: {method}, refine_search {mp.refine_search:g} px"
@@ -155,7 +158,7 @@ def main() -> int:
             plt.close(fig)
             plot_txt = str(plot_path)
 
-        print(f"  {trace.name:<7}{axis:<5}{method:<9}{fmt(trace.slope, 5):>9}{fmt(p1):>11}{fmt(p2):>11}"
+        print(f"  {trace.name:<7}{axis:<5}{method:<16}{fmt(trace.slope, 5):>9}{fmt(p1):>11}{fmt(p2):>11}"
               f"{fmt(diff):>8}{idx_txt:>10}{flag:>6}{global_txt:>12}  {plot_txt}")
     return 0
 

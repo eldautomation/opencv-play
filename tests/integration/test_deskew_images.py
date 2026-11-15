@@ -49,7 +49,7 @@ def test_deskew_succeeds_where_average_succeeds(name, subpixel, default_params):
     )
     if deskew.center is not None:
         assert deskew.angles is not None
-        assert set(deskew.roi_methods) <= {"deskew", "fallback"}
+        assert set(deskew.roi_methods) <= {"deskew", "fallback:tilt", "fallback:bins", "fallback:edge", "fallback:shift"}
 
 
 @pytest.mark.integration
@@ -67,3 +67,19 @@ def test_explicit_default_refine_search_is_identical(name, subpixel, default_par
     assert explicit.angles == default.angles
     assert explicit.roi_methods == default.roi_methods
     assert [t.pos2 for t in explicit.rois] == [t.pos2 for t in default.rois]
+
+
+@pytest.mark.integration
+def test_blob_13_deskew_subpixel_matches_average_subpixel(default_params):
+    # Regression (C2-fix): the right ROI's pass-2 minimum sat on the +/-1.5 px search edge,
+    # moving y by ~1 px. The edge guard must fall back to pass 1 for that ROI.
+    img = cv2.imread(str(IMAGE_DIR / "blob-13.jpg"))
+    if img is None:
+        pytest.fail("Cannot read image: blob-13.jpg")
+    average = find_cross_center_detailed(img, subpixel=True, **default_params)
+    deskew = find_cross_center_detailed(img, subpixel=True, profile_mode="deskew", **default_params)
+    assert average.center is not None and deskew.center is not None
+    dx = deskew.center[0] - average.center[0]
+    dy = deskew.center[1] - average.center[1]
+    assert abs(dx) <= 0.1 and abs(dy) <= 0.1, f"deskew - average = ({dx:+.3f}, {dy:+.3f}) px"
+    assert deskew.roi_methods[2] == "fallback:edge"  # right ROI

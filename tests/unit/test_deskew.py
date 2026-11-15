@@ -26,10 +26,21 @@ def _tilted_line_roi(center: float, slope: float, *, depth: int = ROW_REF_DEPTH,
     return 30.0 + 180.0 * g
 
 
-def _deskew(roi, pos1, slope, **overrides):
+def _deskew_raw(roi, pos1, slope, **overrides):
+    """(method, pass-2 candidate) from _deskew_position."""
     kwargs = dict(oversample_step=0.1, fine_window=40, subpixel=True, subpixel_neighbors=2, name="test")
     kwargs.update(overrides)
     return _deskew_position(roi, pos1, slope, **kwargs)
+
+
+def _deskew(roi, pos1, slope, **overrides):
+    """Pass-2 position when it is used ("deskew"), else None (pass-1 fallback)."""
+    method, pos = _deskew_raw(roi, pos1, slope, **overrides)
+    return pos if method == "deskew" else None
+
+
+def _method(roi, pos1, slope, **overrides) -> str:
+    return _deskew_raw(roi, pos1, slope, **overrides)[0]
 
 
 @pytest.mark.unit
@@ -55,12 +66,14 @@ def test_deskew_position_without_subpixel_is_on_the_fine_grid():
 def test_deskew_position_falls_back_when_line_shift_below_one_pixel():
     slope = 0.9 / ROW_REF_DEPTH  # line shifts 0.9 px over the ROI depth
     assert _deskew(_tilted_line_roi(100.0, slope), 100.0, slope) is None
+    assert _deskew_raw(_tilted_line_roi(100.0, slope), 100.0, slope) == ("fallback:tilt", None)
 
 
 @pytest.mark.unit
 @pytest.mark.parametrize("slope", [float("nan"), float("inf")])
 def test_deskew_position_falls_back_on_undefined_slope(slope):
     assert _deskew(_tilted_line_roi(100.0, TAN_3DEG), 100.0, slope) is None
+    assert _method(_tilted_line_roi(100.0, TAN_3DEG), 100.0, slope) == "fallback:tilt"
 
 
 @pytest.mark.unit
@@ -68,6 +81,7 @@ def test_deskew_position_falls_back_when_too_many_bins_empty():
     # A 60 px wide ROI cannot fill a +/-40 px window: about a quarter of the bins stay empty.
     roi = _tilted_line_roi(30.0, TAN_3DEG, width=60)
     assert _deskew(roi, 30.0, TAN_3DEG) is None
+    assert _deskew_raw(roi, 30.0, TAN_3DEG) == ("fallback:bins", None)
     assert _deskew(roi, 30.0, TAN_3DEG, fine_window=20) is not None
 
 
@@ -95,6 +109,8 @@ def test_deskew_position_interpolates_sparse_bins():
         ({"refine_search": 3.5}, "refine_search must be a number in 0.5..3.0"),
         ({"refine_search": True}, "refine_search must be a number in 0.5..3.0"),
         ({"refine_search": 2.5, "fine_window": 2}, "refine_search .* must be smaller than fine_window"),
+        ({"max_refine_shift": 0.05}, "max_refine_shift must be a number in 0.1..3.0"),
+        ({"max_refine_shift": 3.5}, "max_refine_shift must be a number in 0.1..3.0"),
     ],
 )
 def test_find_cross_center_rejects_invalid_profile_options(overrides, message):
@@ -112,13 +128,46 @@ def test_deskew_position_default_search_is_1_5_px():
 @pytest.mark.unit
 @pytest.mark.parametrize("refine_search", [0.5, 1.5, 2.5])
 def test_deskew_position_stays_within_refine_search(refine_search):
-    # Pass-1 estimate 2 px off: the result is limited to +/-refine_search around it.
+    # Pass-1 estimate 2 px off: the pass-2 candidate is limited to +/-refine_search around it.
     roi = _tilted_line_roi(102.0, TAN_3DEG)
-    pos = _deskew(roi, 100.0, TAN_3DEG, subpixel=False, refine_search=refine_search)
+    method, pos = _deskew_raw(
+        roi, 100.0, TAN_3DEG, subpixel=False, refine_search=refine_search, max_refine_shift=3.0
+    )
     assert pos is not None
     assert abs(pos - 100.0) <= refine_search + 1e-9
     if refine_search > 2.0:
+        assert method == "deskew"
         assert abs(pos - 102.0) <= 0.05 + 1e-9
+    else:
+        assert method == "fallback:edge"  # the real minimum lies outside the search range
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("subpixel", [False, True])
+def test_deskew_position_falls_back_when_minimum_at_search_edge(subpixel):
+    # A second line 3.4 px from the first makes the profile most symmetric about 101.7, so
+    # the RSS curve has a second, deeper dip beyond the +1.5 px search edge.
+    roi = _tilted_line_roi(100.0, TAN_3DEG) + _tilted_line_roi(103.4, TAN_3DEG) - 30.0
+    ssd = sdrm_ssd_curve(_deskew_profile(roi, 100.0, TAN_3DEG, oversample_step=0.1, fine_window=40,
+                                         name="t")[0], 30)
+    assert int(np.argmin(ssd)) - 30 == 17  # the deeper dip, at +1.7 px, is outside +/-15 samples
+    method, pos = _deskew_raw(roi, 100.0, TAN_3DEG, subpixel=subpixel, max_refine_shift=3.0)
+    assert method == "fallback:edge"
+    assert pos == pytest.approx(101.5, abs=0.1 + 1e-9)  # the rejected candidate sits on the edge
+    assert _deskew(roi, 100.0, TAN_3DEG, subpixel=subpixel) is None
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("subpixel", [False, True])
+def test_deskew_position_falls_back_when_shift_exceeds_limit(subpixel):
+    # Line 1.0 px from the pass-1 estimate: inside the search range, beyond max_refine_shift.
+    roi = _tilted_line_roi(101.0, TAN_3DEG)
+    method, pos = _deskew_raw(roi, 100.0, TAN_3DEG, subpixel=subpixel)
+    assert method == "fallback:shift"
+    assert pos == pytest.approx(101.0, abs=0.05)
+    assert _deskew_raw(roi, 100.0, TAN_3DEG, subpixel=subpixel, max_refine_shift=1.2)[0] == "deskew"
+    # Just inside the default limit the pass-2 result is used.
+    assert _method(_tilted_line_roi(100.7, TAN_3DEG), 100.0, TAN_3DEG, subpixel=subpixel) == "deskew"
 
 
 @pytest.mark.unit

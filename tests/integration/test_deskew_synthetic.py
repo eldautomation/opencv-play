@@ -128,7 +128,7 @@ def test_deskew_tracks_subpixel_positions_at_3_degrees(fwhm, subpixel):
 def test_deskew_at_0_degrees_falls_back_to_average(fwhm, subpixel):
     deskew = _centers(fwhm, 0.0, profile_mode="deskew", subpixel=subpixel)
     average = _centers(fwhm, 0.0, profile_mode="average", subpixel=subpixel)
-    assert all(r.roi_methods == ("fallback",) * 4 for r in deskew)
+    assert all(r.roi_methods == ("fallback:tilt",) * 4 for r in deskew)
     assert [r.center for r in deskew] == [r.center for r in average] == GOLDEN_AVERAGE[(0.0, fwhm, subpixel)]
     assert [r.angles for r in deskew] == [r.angles for r in average]
     assert [r.q_ratio_list for r in deskew] == [r.q_ratio_list for r in average]

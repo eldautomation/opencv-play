@@ -152,3 +152,19 @@ def test_measurement_parameters_refine_search_must_be_below_fine_window():
     assert _load("refine_search = 1.5\nfine_window = 2\n").fine_window == 2
     with pytest.raises(ValueError, match="refine_search .* must be smaller than"):
         _load("refine_search = 2.5\nfine_window = 2\n")
+
+
+@pytest.mark.unit
+def test_measurement_parameters_max_refine_shift_defaults_and_loads():
+    assert _load().max_refine_shift == 0.75
+    for mp in load_library(PROJECT_ROOT / "configs")["measurement_parameters_by_id"].values():
+        assert mp.max_refine_shift == 0.75
+    assert _load("max_refine_shift = 0.1\n").max_refine_shift == 0.1
+    assert _load("max_refine_shift = 3\n").max_refine_shift == 3.0
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("value", ["0.05", "3.5", "0", "true", '"0.75"'])
+def test_measurement_parameters_invalid_max_refine_shift_raises(value):
+    with pytest.raises(ValueError, match="max_refine_shift must be a number in 0.1..3.0"):
+        _load(f"max_refine_shift = {value}\n")

@@ -30,7 +30,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
 
-from autocollimator.config.models import OVERSAMPLE_STEP_RANGE, PROFILE_MODES, REFINE_SEARCH_RANGE
+from autocollimator.config.models import (
+    MAX_REFINE_SHIFT_RANGE,
+    OVERSAMPLE_STEP_RANGE,
+    PROFILE_MODES,
+    REFINE_SEARCH_RANGE,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -825,6 +830,30 @@ def _sdrm_core(
     subpixel_neighbors: int = 2,
 ) -> tuple[int | float, float]:
     """
+    SDRM center offset estimator for 1D signals, without a quality check. Returns
+    (peak_from_center, r1); see ``_sdrm_core_detail``.
+    """
+    peak_from_center, r1, _k_int = _sdrm_core_detail(
+        values,
+        search_size,
+        debug=debug,
+        debug_prefix=debug_prefix,
+        subpixel=subpixel,
+        subpixel_neighbors=subpixel_neighbors,
+    )
+    return peak_from_center, r1
+
+
+def _sdrm_core_detail(
+    values,
+    search_size: int,
+    *,
+    debug: bool = False,
+    debug_prefix: str = "./test_out/test-",
+    subpixel: bool = False,
+    subpixel_neighbors: int = 2,
+) -> tuple[int | float, float, int]:
+    """
     SDRM center offset estimator for 1D signals, without a quality check.
 
     This function preserves the original SDRM algorithm:
@@ -846,9 +875,11 @@ def _sdrm_core(
 
     Returns
     -------
-    (peak_from_center, r1):
+    (peak_from_center, r1, k_int):
         ``peak_from_center`` is the offset in samples that minimizes RSS: an int when
         ``subpixel`` is False, a float when True. ``r1`` is min(RSS) / mean(RSS).
+        ``k_int`` is the integer offset of the RSS minimum (before any sub-pixel fit), in
+        -search_size..+search_size.
     """
     # ----------------------------
     # Type + shape checks
@@ -1033,11 +1064,12 @@ def _sdrm_core(
 
 
     # Original function returned peak_from_center only
-    peak_from_center: int | float = int(min_k[0])
+    k_int = int(min_k[0])
+    peak_from_center: int | float = k_int
     if subpixel:
         peak_from_center = _subpixel_offset(ssd_by_i, int(min_i[0]), peak_from_center, subpixel_neighbors)
 
-    return peak_from_center, r1
+    return peak_from_center, r1, k_int
 
 
 def _subpixel_offset(ssd: list[float], m: int, k_m: int, neighbors: int) -> float:
@@ -1218,6 +1250,8 @@ def _clip_roi(
 
 # Deskew pass 2: default search half-range around the pass-1 estimate, in pixels.
 DESKEW_SEARCH_PX = 1.5
+# Deskew pass 2: default limit on |pass2 - pass1| in pixels before falling back.
+DESKEW_MAX_REFINE_SHIFT_PX = 0.75
 # Deskew pass 2 falls back to the pass-1 result when more bins than this are empty.
 DESKEW_MAX_EMPTY_FRACTION = 0.2
 
@@ -1233,7 +1267,8 @@ class RoiTrace:
     roi: np.ndarray
     # Pass-2 slope (dx/dy for top/bottom, dy/dx for left/right); None when pass 2 did not run.
     slope: float | None
-    # Positions in ROI column coordinates; pos2 is None when pass 2 did not run or fell back.
+    # Positions in ROI column coordinates. pos2 is the pass-2 candidate, also when it was
+    # rejected (fallback:edge / fallback:shift); None when pass 2 did not compute one.
     pos1: float
     pos2: float | None
 
@@ -1247,14 +1282,15 @@ class CrossCenterResult:
     overlay: np.ndarray
     # One RSS ratio per ROI, in ROI_NAMES order (always from pass 1).
     q_ratio_list: list[float]
-    # Profile method per ROI, in ROI_NAMES order: "average", "deskew" or "fallback".
+    # Profile method per ROI, in ROI_NAMES order: "average", "deskew", or a pass-1 fallback
+    # "fallback:tilt", "fallback:bins", "fallback:edge", "fallback:shift" (see _deskew_position).
     roi_methods: tuple[str, ...]
     # Intermediate values per ROI, in ROI_NAMES order.
     rois: tuple[RoiTrace, ...] = ()
 
 
 def _validate_profile_options(
-    profile_mode: str, oversample_step: float, fine_window: int, refine_search: float
+    profile_mode: str, oversample_step: float, fine_window: int, refine_search: float, max_refine_shift: float
 ) -> None:
     if profile_mode not in PROFILE_MODES:
         raise ValueError(f"profile_mode must be one of {PROFILE_MODES}, got {profile_mode!r}")
@@ -1280,6 +1316,13 @@ def _validate_profile_options(
         raise ValueError(f"refine_search must be a number in {lo}..{hi}, got {refine_search!r}")
     if not refine_search < fine_window:
         raise ValueError(f"refine_search ({refine_search}) must be smaller than fine_window ({fine_window})")
+    lo, hi = MAX_REFINE_SHIFT_RANGE
+    if (
+        isinstance(max_refine_shift, (bool, np.bool_))
+        or not isinstance(max_refine_shift, (int, float, np.floating, np.integer))
+        or not lo <= max_refine_shift <= hi
+    ):
+        raise ValueError(f"max_refine_shift must be a number in {lo}..{hi}, got {max_refine_shift!r}")
 
 
 def _deskew_profile(
@@ -1290,7 +1333,7 @@ def _deskew_profile(
     oversample_step: float,
     fine_window: int,
     name: str,
-) -> tuple[np.ndarray, float] | None:
+) -> tuple[np.ndarray | None, str]:
     """
     Deskewed, oversampled profile of one ROI (in search orientation: the line runs along
     the rows, the profile is taken across the columns).
@@ -1300,15 +1343,16 @@ def _deskew_profile(
     px of the pass-1 estimate ``pos1``; empty bins are filled by linear interpolation. The
     center sample (index ``round(fine_window / oversample_step)``) is at ``pos1``.
 
-    Returns (profile, empty_fraction), or None when pass 2 does not apply (line shifts less
-    than 1 px over the ROI depth, or too many empty bins).
+    Returns (profile, "deskew"), or (None, reason) when pass 2 does not apply: "fallback:tilt"
+    when the line shifts less than 1 px over the ROI depth, "fallback:bins" when more than
+    ``DESKEW_MAX_EMPTY_FRACTION`` of the bins are empty.
     """
     depth = roi.shape[0]
     if not math.isfinite(slope) or depth * abs(slope) < 1.0:
         LOGGER.debug(
             "Deskew %s: roi_depth * |slope| = %d * %.4g < 1 px; using pass-1 result", name, depth, abs(slope)
         )
-        return None
+        return None, "fallback:tilt"
 
     rows, cols = np.indices(roi.shape, dtype=np.float64)
     u = cols - slope * (rows - depth / 2.0)
@@ -1326,11 +1370,12 @@ def _deskew_profile(
             "Deskew %s: empty-bin fraction %.3f > %.2f; using pass-1 result",
             name, empty_fraction, DESKEW_MAX_EMPTY_FRACTION,
         )
-        return None
+        return None, "fallback:bins"
 
     bins = np.arange(n_bins, dtype=np.float64)
     profile = np.interp(bins, bins[filled], sums[filled] / counts[filled])
-    return profile, empty_fraction
+    LOGGER.debug("Deskew %s: slope=%.6g empty_fraction=%.3f", name, slope, empty_fraction)
+    return profile, "deskew"
 
 
 def _deskew_position(
@@ -1344,23 +1389,28 @@ def _deskew_position(
     subpixel_neighbors: int,
     name: str,
     refine_search: float = DESKEW_SEARCH_PX,
-) -> float | None:
+    max_refine_shift: float = DESKEW_MAX_REFINE_SHIFT_PX,
+) -> tuple[str, float | None]:
     """
     Pass 2 of the deskew profile mode for one ROI: center the ``_deskew_profile`` with
-    ``_sdrm_core`` (no quality limit) within +/-``refine_search`` px of ``pos1``.
+    ``_sdrm_core_detail`` (no quality limit) within +/-``refine_search`` px of ``pos1``.
 
-    Returns the position in ROI column coordinates, or None when pass 2 does not apply and
-    the pass-1 result should be used.
+    Returns (method, pos2). ``pos2`` is the pass-2 position in ROI column coordinates, or
+    None when no profile could be built. The caller uses ``pos2`` only when ``method`` is
+    "deskew"; otherwise it keeps the pass-1 result:
+    - "fallback:tilt", "fallback:bins": see ``_deskew_profile`` (pos2 is None).
+    - "fallback:edge": the integer fine minimum is at either end of the search range, so
+      no real minimum was found inside it.
+    - "fallback:shift": |pos2 - pos1| > ``max_refine_shift`` px.
     """
-    deskewed = _deskew_profile(
+    profile, method = _deskew_profile(
         roi, pos1, slope, oversample_step=oversample_step, fine_window=fine_window, name=name
     )
-    if deskewed is None:
-        return None
-    profile, empty_fraction = deskewed
+    if profile is None:
+        return method, None
 
     search_samples = int(round(refine_search / oversample_step))
-    offset_samples, r1 = _sdrm_core(
+    offset_samples, r1, k_int = _sdrm_core_detail(
         profile,
         search_samples,
         subpixel=subpixel,
@@ -1368,10 +1418,14 @@ def _deskew_position(
     )
     pos2 = pos1 + offset_samples * oversample_step
     LOGGER.debug(
-        "Deskew %s: slope=%.6g empty_fraction=%.3f r1=%.4g pass1=%.4f pass2=%.4f",
-        name, slope, empty_fraction, r1, pos1, pos2,
+        "Deskew %s: r1=%.4g min_index=%+d/%d pass1=%.4f pass2=%.4f",
+        name, r1, k_int, search_samples, pos1, pos2,
     )
-    return pos2
+    if abs(k_int) == search_samples:
+        return "fallback:edge", pos2
+    if abs(pos2 - pos1) > max_refine_shift:
+        return "fallback:shift", pos2
+    return "deskew", pos2
 
 
 def sdrm_ssd_curve(values, search_size: int) -> np.ndarray:
@@ -1421,6 +1475,7 @@ def find_cross_center(
     oversample_step: float = 0.1,
     fine_window: int = 40,
     refine_search: float = DESKEW_SEARCH_PX,
+    max_refine_shift: float = DESKEW_MAX_REFINE_SHIFT_PX,
 ) -> tuple[tuple[float, float] | None, tuple[float, float] | None, np.ndarray, list[float]]:
     """
     Find the center of a crosshair and estimate tilt angles.
@@ -1449,6 +1504,7 @@ def find_cross_center(
         oversample_step=oversample_step,
         fine_window=fine_window,
         refine_search=refine_search,
+        max_refine_shift=max_refine_shift,
     )
     return result.center, result.angles, result.overlay, result.q_ratio_list
 
@@ -1469,6 +1525,7 @@ def find_cross_center_detailed(
     oversample_step: float = 0.1,
     fine_window: int = 40,
     refine_search: float = DESKEW_SEARCH_PX,
+    max_refine_shift: float = DESKEW_MAX_REFINE_SHIFT_PX,
 ) -> CrossCenterResult:
     """
     Find the center of a crosshair and estimate tilt angles.
@@ -1483,14 +1540,19 @@ def find_cross_center_detailed(
         line (pass 1 only). "deskew": after pass 1, project each pixel across the line using
         the slope measured in pass 1, bin at ``oversample_step`` px and center that profile
         (pass 2). A ROI falls back to its pass-1 result when the line shifts less than 1 px
-        over the ROI depth or more than 20 % of the bins are empty.
+        over the ROI depth ("fallback:tilt") or more than 20 % of the bins are empty
+        ("fallback:bins"); see also ``refine_search`` and ``max_refine_shift``.
     oversample_step:
         Bin width of the deskewed profile in px, 0.02..0.5 (deskew only).
     fine_window:
         Half-width in px of the deskewed profile around the pass-1 estimate (deskew only).
     refine_search:
         Pass-2 search half-range in px around the pass-1 estimate, 0.5..3.0 and smaller than
-        ``fine_window`` (deskew only).
+        ``fine_window`` (deskew only). A ROI whose fine minimum lies at either end of this
+        range falls back to its pass-1 result ("fallback:edge").
+    max_refine_shift:
+        A ROI whose pass-2 position differs from pass 1 by more than this many px, 0.1..3.0,
+        falls back to its pass-1 result ("fallback:shift") (deskew only).
 
     Returns
     -------
@@ -1515,7 +1577,7 @@ def find_cross_center_detailed(
         subpixel,
     )
 
-    _validate_profile_options(profile_mode, oversample_step, fine_window, refine_search)
+    _validate_profile_options(profile_mode, oversample_step, fine_window, refine_search, max_refine_shift)
 
     if image is None:
         raise ValueError("image is None")
@@ -1680,7 +1742,7 @@ def find_cross_center_detailed(
         for name in ROI_NAMES:
             x0, y0, _x1, _y1, roi, pos1 = roi_data[name]
             roi_slopes[name] = slope_v if name in ("top", "bottom") else slope_h
-            pos2 = _deskew_position(
+            method, pos2 = _deskew_position(
                 roi,
                 pos1,
                 roi_slopes[name],
@@ -1690,13 +1752,21 @@ def find_cross_center_detailed(
                 subpixel_neighbors=subpixel_neighbors,
                 name=name,
                 refine_search=refine_search,
+                max_refine_shift=max_refine_shift,
             )
+            roi_methods[name] = method
             roi_pos2[name] = pos2
-            if pos2 is None:
-                roi_methods[name] = "fallback"
-            else:
-                roi_methods[name] = "deskew"
+            if method == "deskew":
                 centers_measured[name] = _roi_point(name, x0, y0, roi, pos2)
+            elif pos2 is not None:
+                # Rejected pass-2 candidate (fallback:edge / fallback:shift).
+                axis, origin = ("x", x0) if name in ("top", "bottom") else ("y", y0)
+                LOGGER.warning(
+                    "Deskew ROI %s: %s, keeping pass-1 result. pass1 %s=%.3f, pass2 %s=%.3f "
+                    "(diff %+.3f px; refine_search %g px, max_refine_shift %g px)",
+                    name, method, axis, origin + pos1, axis, origin + pos2, pos2 - pos1,
+                    refine_search, max_refine_shift,
+                )
         LOGGER.info(
             "Deskew profile methods: %s",
             ", ".join(f"{name}={roi_methods[name]}" for name in ROI_NAMES),

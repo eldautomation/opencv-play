@@ -62,7 +62,8 @@ def mode_label(mp) -> str:
     readout = f"subpixel n={mp.subpixel_neighbors}" if mp.subpixel else "integer"
     label = f"{mp.profile_mode} / {readout}"
     if mp.profile_mode == "deskew":
-        label += f" (step {mp.oversample_step:g}, window {mp.fine_window}, search {mp.refine_search:g})"
+        label += (f" (step {mp.oversample_step:g}, window {mp.fine_window}, search {mp.refine_search:g},"
+                  f" max shift {mp.max_refine_shift:g})")
     return label
 
 
@@ -90,10 +91,10 @@ def evaluate(image_dir: Path, config_dir: Path, run_dir: Path, overrides: dict) 
         mp = app.get_measurement_parameters()
         logging.getLogger(__name__).warning(
             "Using crop_center=(%d, %d) crop_size=(%d, %d) roi_size=(%d, %d) subpixel=%s subpixel_neighbors=%d "
-            "profile_mode=%s oversample_step=%g fine_window=%d refine_search=%g",
+            "profile_mode=%s oversample_step=%g fine_window=%d refine_search=%g max_refine_shift=%g",
             mp.crop_center_x, mp.crop_center_y, mp.crop_size_x, mp.crop_size_y, mp.roi_size_x, mp.roi_size_y,
             mp.subpixel, mp.subpixel_neighbors, mp.profile_mode, mp.oversample_step, mp.fine_window,
-            mp.refine_search,
+            mp.refine_search, mp.max_refine_shift,
         )
         mode = mode_label(mp)
         sensor = app.get_image_sensor()
@@ -244,6 +245,8 @@ def main() -> int:
                     help="Half-width of the deskewed profile in px (used with --profile-mode deskew)")
     ap.add_argument("--refine-search", type=float, metavar="PX",
                     help="Pass-2 search half-range in px, 0.5-3.0 (used with --profile-mode deskew)")
+    ap.add_argument("--max-refine-shift", type=float, metavar="PX",
+                    help="Max pass-2 shift from pass 1 in px before falling back, 0.1-3.0 (deskew only)")
     args = ap.parse_args()
 
     overrides: dict = {}
@@ -265,6 +268,8 @@ def main() -> int:
         overrides.update(fine_window=args.fine_window)
     if args.refine_search is not None:
         overrides.update(refine_search=args.refine_search)
+    if args.max_refine_shift is not None:
+        overrides.update(max_refine_shift=args.max_refine_shift)
 
     logging.basicConfig(level=logging.ERROR)
     logging.getLogger(__name__).setLevel(logging.WARNING)

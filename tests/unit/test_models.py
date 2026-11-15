@@ -106,3 +106,25 @@ def test_measured_values_invalid_roi_method_raises(field, value):
         MeasuredValues(**_values(**{field: value}))
     with pytest.raises(ValueError, match=f"{field} must be one of"):
         MeasuredValues.from_dict(_values(**{field: value}))
+
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("value", ["fallback:tilt", "fallback:bins", "fallback:edge", "fallback:shift"])
+def test_measured_values_accepts_fallback_reasons(value):
+    mv = MeasuredValues.from_dict(_values(roi_method_m2=value))
+    assert mv.roi_method_m2 == value
+
+
+@pytest.mark.unit
+def test_measured_values_legacy_plain_fallback_still_loads():
+    # Measurement files written before fallback reasons were recorded contain "fallback".
+    mv = MeasuredValues.from_dict(_values(roi_method_m0="fallback"))
+    assert mv.roi_method_m0 == "fallback"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("value", ["fallback:", "fallback:other"])
+def test_measured_values_unknown_fallback_reason_raises(value):
+    with pytest.raises(ValueError, match="roi_method_m1 must be one of"):
+        MeasuredValues(**_values(roi_method_m1=value))
