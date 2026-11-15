@@ -22,6 +22,7 @@ from autocollimator.config.models import (
     DetectOptics,
     IOHardware,
     MeasurementHardware,
+    PresearchResult,
 )
 
 from autocollimator.config.store import (
@@ -41,6 +42,7 @@ from autocollimator.instrument import (
     TiltZeroReference,
     image_rotation_rad,
 )
+from autocollimator.presearch import presearch
 from autocollimator.units import AngleUnit, OutputUnits
 
 from autocollimator.workflow import (
@@ -104,6 +106,10 @@ class AutocollimatorApp:
         self.device_config: Device | None = None
         self.measurement_parameters: MeasurementParameters | None = None
         self.is_started: bool = False
+        # Center (px) and line FWHM of the last successful measurement, for presearch_mode
+        # "track". Memory only; never persisted.
+        self._tracked_center: tuple[float, float] | None = None
+        self._tracked_line_fwhm_px: float | None = None
 
         LOGGER.debug(
             "AutocollimatorApp initialized with config_dir=%s input_dir=%s output_dir=%s",
@@ -173,6 +179,7 @@ class AutocollimatorApp:
         validate_device_references(self.device_config, self.library)
 
         self.context.output_dir.mkdir(parents=True, exist_ok=True)
+        self.reset_tracking()
 
         self.is_started = True
         LOGGER.info("Application startup complete")
@@ -194,6 +201,7 @@ class AutocollimatorApp:
 
         self.library = None
         self.device_config = None
+        self.reset_tracking()
         self.is_started = False
 
         LOGGER.info("Application shutdown complete")
@@ -467,6 +475,50 @@ class AutocollimatorApp:
             detect_optics=self.get_detect_optics(),
             io_hardware=self.get_io_hardware(),
             capture_mode=self.get_capture_mode(),
+        )
+
+
+    @property
+    def tracked_center(self) -> tuple[float, float] | None:
+        """Center of the last successful measurement (memory only), used by presearch_mode "track"."""
+        return self._tracked_center
+
+
+    @property
+    def tracked_line_fwhm_px(self) -> float | None:
+        """Line FWHM from the last pre-search behind a successful measurement, or None."""
+        return self._tracked_line_fwhm_px
+
+
+    def set_tracking(self, center: tuple[float, float], line_fwhm_px: float | None = None) -> None:
+        """Remember a successful measurement's center for presearch_mode "track" (not persisted)."""
+        self._tracked_center = (float(center[0]), float(center[1]))
+        self._tracked_line_fwhm_px = line_fwhm_px
+
+
+    def reset_tracking(self) -> None:
+        """Forget the tracked center; the next "track" measurement runs the pre-search."""
+        self._tracked_center = None
+        self._tracked_line_fwhm_px = None
+
+
+    def run_presearch(self, image: np.ndarray) -> PresearchResult:
+        """
+        Run the pre-search (R4) on ``image`` with the active settings and return its result.
+
+        On demand and read-only: nothing is saved to the config and the tracked center is not
+        changed. Uses measurement_parameters.presearch, gray_mode and roi_size_y (strip depth).
+        """
+        if not self.is_started:
+            raise RuntimeError("Application is not started. Call startup() first.")
+
+        mps = self.get_measurement_parameters()
+        return presearch(
+            image,
+            mps.presearch,
+            self.get_instrument_model().reticle_type,
+            gray_mode=mps.gray_mode,
+            roi_depth_px=int(mps.roi_size_y),
         )
 
 

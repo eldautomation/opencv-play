@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import logging
+import math
 import numpy as np
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from autocollimator.config.models import (
     Device,
@@ -19,11 +20,16 @@ from autocollimator.config.models import (
     Recommendations,
     MeasurementHardware,
     MeasurementOutput,
+    PresearchResult,
 )
 
-from autocollimator.instrument import check_image_size, to_angular
+from autocollimator.instrument import InstrumentModel, check_image_size, to_angular
+from autocollimator.presearch import presearch, recommend_region
 from autocollimator.target_utils import(
     ROI_NAMES,
+    CrossCenterResult,
+    ensure_bgr_u8,
+    ensure_gray_f64,
     find_cross_center_detailed,
     image_md5
 )
@@ -114,6 +120,79 @@ def _quality_failure_message(q_ratio_list: list[float], q_limit: float) -> str:
         return "Center could not be determined: quality check failed for ROI " + ", ".join(failed)
     ratios = ", ".join(f"{name} {q:.3f}" for name, q in zip(ROI_NAMES, q_ratio_list))
     return f"Center could not be determined (rss_ratio limit {q_limit:.3f}; ratios: {ratios})"
+
+
+@dataclass(frozen=True)
+class _CropChoice:
+    """Which crop a measurement used and how it was chosen (see presearch_mode)."""
+
+    # None when nothing was measured (pre-search failed, presearch_failure_action "fail").
+    result: CrossCenterResult | None
+    crop_center: tuple[int, int] | None
+    crop_size: tuple[int, int] | None
+    # "configured" | "presearch" | "tracked"; None when nothing was measured.
+    crop_source: str | None
+    presearch_ran: bool
+    presearch_result: PresearchResult | None
+    # Appended to the measurement message; the whole message when nothing was measured.
+    note: str | None
+
+
+def _choose_crop_and_measure(
+    app: "AutocollimatorApp",
+    image: np.ndarray,
+    model: InstrumentModel,
+    mps: MeasurementParameters,
+    measure: Callable[[tuple[int, int], tuple[int, int]], CrossCenterResult],
+    configured_center: tuple[int, int],
+    configured_size: tuple[int, int],
+) -> _CropChoice:
+    """
+    Pick the crop by ``mps.presearch.presearch_mode`` and measure with it.
+
+    - "off": the configured crop; the pre-search is not run.
+    - "every_image": pre-search; on success measure with the recommended crop.
+    - "track": measure around the previous successful center (app memory) with the
+      recommended size; if there is none, or that measurement fails, pre-search as above.
+    A failed pre-search applies ``presearch_failure_action``: "use_configured_crop" measures
+    with the configured crop and notes the failure, "fail" measures nothing.
+    """
+    ps = mps.presearch
+    if ps.presearch_mode == "off":
+        result = measure(configured_center, configured_size)
+        return _CropChoice(result, configured_center, configured_size, "configured", False, None, None)
+
+    height, width = image.shape[:2]
+    if ps.presearch_mode == "track" and app.tracked_center is not None:
+        region = recommend_region(app.tracked_center, (width, height), ps, app.tracked_line_fwhm_px)
+        if region.center is not None and region.size is not None:
+            size = (region.size, region.size)
+            result = measure(region.center, size)
+            if result.center is not None:
+                return _CropChoice(result, region.center, size, "tracked", False, None, None)
+            LOGGER.info("Measurement at the tracked center %s failed; running the pre-search", app.tracked_center)
+        else:
+            LOGGER.info(
+                "No region at the tracked center %s (%s); running the pre-search",
+                app.tracked_center, region.failure_reason,
+            )
+
+    pr = presearch(image, ps, model.reticle_type, gray_mode=mps.gray_mode, roi_depth_px=int(mps.roi_size_y))
+    if pr.success:
+        assert pr.recommended_center_x is not None and pr.recommended_center_y is not None
+        assert pr.recommended_size is not None
+        center = (pr.recommended_center_x, pr.recommended_center_y)
+        size = (pr.recommended_size, pr.recommended_size)
+        return _CropChoice(measure(center, size), center, size, "presearch", True, pr, None)
+
+    LOGGER.warning("Pre-search failed: %s (presearch_failure_action %s)", pr.failure_reason, ps.presearch_failure_action)
+    if ps.presearch_failure_action == "fail":
+        return _CropChoice(None, None, None, None, True, pr, f"Pre-search failed: {pr.failure_reason}")
+    result = measure(configured_center, configured_size)
+    return _CropChoice(
+        result, configured_center, configured_size, "configured", True, pr,
+        f"pre-search failed: {pr.failure_reason}; configured crop used",
+    )
 
 
             # app=self,
@@ -262,32 +341,47 @@ def run_center_finding_on_image(
         debug,
     )
 
-    result = find_cross_center_detailed(
-        image=image,
-        crop_center=crop_center,
-        crop_size=crop_size,
-        roi_size=roi_size,
-        q_limit=qls.rss_ratio,
-        subpixel=mps.subpixel,
-        subpixel_neighbors=mps.subpixel_neighbors,
-        profile_mode=mps.profile_mode,
-        oversample_step=mps.oversample_step,
-        fine_window=mps.fine_window,
-        fine_window_mode=mps.fine_window_mode,
-        refine_search=mps.refine_search,
-        max_refine_shift=mps.max_refine_shift,
-        gray_mode=mps.gray_mode,
-        debug=debug,
-        debug_prefix=debug_prefix_str if debug_prefix_str is not None else "",
-    )
-    position, angles = result.center, result.angles
-    overlay_image, q_ratio_list = result.overlay, result.q_ratio_list
+    def measure(center: tuple[int, int], size: tuple[int, int]) -> CrossCenterResult:
+        return find_cross_center_detailed(
+            image=image,
+            crop_center=center,
+            crop_size=size,
+            roi_size=roi_size,
+            q_limit=qls.rss_ratio,
+            subpixel=mps.subpixel,
+            subpixel_neighbors=mps.subpixel_neighbors,
+            profile_mode=mps.profile_mode,
+            oversample_step=mps.oversample_step,
+            fine_window=mps.fine_window,
+            fine_window_mode=mps.fine_window_mode,
+            refine_search=mps.refine_search,
+            max_refine_shift=mps.max_refine_shift,
+            gray_mode=mps.gray_mode,
+            debug=debug,
+            debug_prefix=debug_prefix_str if debug_prefix_str is not None else "",
+        )
 
-    success = position is not None
-    if success:
-        message = "Center found"
+    choice = _choose_crop_and_measure(app, image, model, mps, measure, crop_center, crop_size)
+    result = choice.result
+    if result is not None:
+        position, angles = result.center, result.angles
+        overlay_image, q_ratio_list = result.overlay, result.q_ratio_list
+        roi_methods, saturation, fine_windows = result.roi_methods, result.saturation, result.fine_windows
+        success = position is not None
+        message = "Center found" if success else _quality_failure_message(q_ratio_list, qls.rss_ratio)
+        if choice.note is not None:
+            message = f"{message} ({choice.note})"
     else:
-        message = _quality_failure_message(q_ratio_list, qls.rss_ratio)
+        # Pre-search failed with presearch_failure_action "fail": center finding did not run,
+        # so there are no ROI values (NaN quality ratios, "not_run" methods).
+        position, angles = None, None
+        overlay_image = ensure_bgr_u8(ensure_gray_f64(image, mps.gray_mode))
+        q_ratio_list = [math.nan] * len(ROI_NAMES)
+        roi_methods = ("not_run",) * len(ROI_NAMES)
+        saturation = fine_windows = (None,) * len(ROI_NAMES)
+        success = False
+        message = choice.note or "Pre-search failed"
+    if not success:
         LOGGER.warning(message)
 
     LOGGER.info(
@@ -296,7 +390,12 @@ def run_center_finding_on_image(
         position,
         angles,
     )
-    # LOGGER.debug(f"q ratio:{q_ratio_list}")
+    if success:
+        presearch_result = choice.presearch_result
+        app.set_tracking(
+            position,
+            presearch_result.line_fwhm_px if presearch_result is not None else app.tracked_line_fwhm_px,
+        )
 
     overlay_hash = image_md5(overlay_image)
     image_hash = image_md5(image)
@@ -321,18 +420,18 @@ def run_center_finding_on_image(
         overlay_hash = overlay_hash,
         success = success,
         message = message,
-        roi_method_m0 = result.roi_methods[0],
-        roi_method_m1 = result.roi_methods[1],
-        roi_method_m2 = result.roi_methods[2],
-        roi_method_m3 = result.roi_methods[3],
-        saturation_s0 = result.saturation[0],
-        saturation_s1 = result.saturation[1],
-        saturation_s2 = result.saturation[2],
-        saturation_s3 = result.saturation[3],
-        fine_window_used_f0 = result.fine_windows[0],
-        fine_window_used_f1 = result.fine_windows[1],
-        fine_window_used_f2 = result.fine_windows[2],
-        fine_window_used_f3 = result.fine_windows[3],
+        roi_method_m0 = roi_methods[0],
+        roi_method_m1 = roi_methods[1],
+        roi_method_m2 = roi_methods[2],
+        roi_method_m3 = roi_methods[3],
+        saturation_s0 = saturation[0],
+        saturation_s1 = saturation[1],
+        saturation_s2 = saturation[2],
+        saturation_s3 = saturation[3],
+        fine_window_used_f0 = fine_windows[0],
+        fine_window_used_f1 = fine_windows[1],
+        fine_window_used_f2 = fine_windows[2],
+        fine_window_used_f3 = fine_windows[3],
         image_width = image_width,
         image_height = image_height,
     )
