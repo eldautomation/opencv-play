@@ -45,6 +45,25 @@ image measurement, the angular measurement and an InstrumentModel snapshot.
 ### R4 — Fixed crop fails on about half the images
 Crop center is fixed in config (872, 544); crosshair moves between images. Add a coarse locate
 pass (e.g. row/column projection profiles on a downsampled image) then the existing refine pass.
+Status: resolved in Phase G (2026-11-15, docs/phase_G_prompt.md). New pre-search
+(`presearch.py`), a separate image-layer routine selected by reticle type: on the image
+downsampled by `presearch_downsample` it runs the existing SDRM centering on ROI strips spanning
+the whole image (`sdrm_full_frame`), with a projection-profile fallback (`projection`) when that
+fails. Success needs both lines, quality ratios below `presearch_q_limit`, the intersection inside
+the image and a validation pass in the recommended region agreeing within
+`presearch_agreement_px`. It recommends a square region (fraction × min(W, H), at least
+`min_crop_size_px` and 4 × line FWHM), shifted inward near the edge and shrunk only when the
+crosshair would leave the region's middle half. A second candidate line above
+`presearch_ambiguity_ratio` is warned about (R19). The pre-search is **opt-in**:
+`presearch_mode` defaults to "off" (configured crop, results unchanged); "every_image" and
+"track" (previous center, pre-search as fallback) use the recommended crop, and
+`presearch_failure_action` chooses between the configured crop and a failed measurement.
+`AutocollimatorApp.run_presearch` runs it on demand without writing the config. The measurement
+YAML records the mode, the full pre-search result and the crop used (source configured /
+presearch / tracked). Evaluation on tests/assets/images (`scripts/evaluate_presearch.py`):
+pre-search 32/35 (6 by the fallback); measurement success off 14/35 → every_image 31/35, none
+lost; Blur 1, Blur 2 and Off 3 still fail. Centers that succeed both ways differ by median
+1.09 px (R23; blob-16 by 15 px, R22).
 
 ### R5 — Config does not match hardware / design doc
 Test images are 1920×1080; configured sensor is IMX296 (1456×1088); no check that image size matches
@@ -97,6 +116,14 @@ Remove old `sdrm`, `run_demo`, unreachable `_default_crop_from_image` branch, st
 discarded `pairs` computation. Import matplotlib lazily inside debug plotting. Consider Git LFS for
 test images (repo zip is ~307 MB). Add `.gitattributes` for consistent line endings.
 
+### R15 — blob-16 position differs between crops
+blob-16 measured with the configured crop and with the pre-search crop differed by ~15 px.
+Status: cause found and resolved in Phase G (2026-11-15). Cause: ROI edge clipping with the
+configured crop — the vertical line lies at the edge of the top/bottom ROIs and is cut off, which
+pulls SDRM to x ≈ 1180 (blob-16 off by ~15 px) while the quality check still passes. The
+pre-search crop centers the lines and gives x ≈ 1195. Resolved by the pre-search crop; the
+missing check in the measurement itself is tracked as R22.
+
 ### R16 — Quality ratio penalizes thin lines
 With q_limit 0.5, synthetic 1.5 px FWHM lines fail pass 1 at 6/11 sub-pixel positions
 (found in Phase C2). The min/mean RSS ratio depends on line width relative to the search
@@ -146,3 +173,24 @@ test_signal_quality_defaults.py, the blob-22 deskew+subpixel pin) are re-pinned 
 same commit, with old → new values listed and a before/after report (20 vs 40 px, default,
 sub-pixel and deskew modes). No tolerances are loosened.
 Status: decided; implementation via docs/phase_R20_roi_depth_prompt.md.
+
+### R21 — NaN quality ratio passes as success
+A perfectly flat ROI gives q = NaN; sdrm_2's check `q > q_limit` is False for NaN, so the ROI passes
+and the measurement can be reported as a success (R1-type false success). The pre-search
+validation rejects NaN; the measurement path does not yet. Fix: treat a non-finite q as a quality
+failure with a clear reason.
+
+### R22 — ROI edge clipping gives silently biased results
+When a line lies at the edge of an ROI (cut off), SDRM is pulled toward the clipped side but can
+still pass the quality check. blob-16 with the configured crop was off by ~15 px with q 0.39/0.46.
+The pre-search crop avoids it by centering the lines; the measurement itself has no check. Fix:
+detect a line minimum near the ROI profile ends and fail or flag it.
+
+### R23 — Center depends on crop geometry (lines not straight)
+Between the configured crop and the 540 px pre-search crop, centers differ by median 1.09 px, max
+~2.2 px (excluding blob-16), with sub-pixel and deskew too. Line angles differ by up to ~0.3°
+(Test4: 0.76° vs 0.45°): the lines are not perfectly straight or even, and two points per line
+sample them differently. This exceeds the ~0.3 px target. Crops centered on the crosshair
+(pre-search/track) sample the same reticle parts as the spot moves, which may make differential
+measurements more consistent; to be verified with bench data. Remedy planned: several strips per
+arm with a robust line fit (robustness step 3).
