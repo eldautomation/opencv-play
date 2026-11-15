@@ -13,7 +13,7 @@ from synthetic import TRUE_CENTER, render_crosshair
 
 # Default config geometry. q_limit is relaxed to 0.99: at FWHM 1.5 px pass 1 exceeds the
 # default 0.5 at some positions, and these tests are about centering accuracy, not the gate.
-PARAMS = dict(crop_center=(872, 544), crop_size=(1018, 652), roi_size=(500, 20), q_limit=0.99)
+PARAMS = dict(crop_center=(872, 544), crop_size=(1018, 652), roi_size=("auto", 20), q_limit=0.99)
 FWHMS = (1.5, 3.0, 8.0)
 SHIFTS = [i / 10 for i in range(11)]
 DESKEW_TOLERANCE_PX = {False: 0.06, True: 0.02}  # keyed by subpixel

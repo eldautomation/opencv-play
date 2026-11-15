@@ -33,12 +33,14 @@ from typing import Iterable, Sequence
 from autocollimator.units import wrap_symmetric
 
 from autocollimator.config.models import (
+    DEFAULT_NOMINAL_SLANT_DEG,
     FINE_WINDOW_MODES,
     GRAY_MODES,
     MAX_REFINE_SHIFT_RANGE,
     OVERSAMPLE_STEP_RANGE,
     PROFILE_MODES,
     REFINE_SEARCH_RANGE,
+    ROI_LENGTH_AUTO,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -1145,10 +1147,10 @@ def find_center_pixel(
 
     Returns
     -------
-    pos_x:
-        Estimated center position along x in strip coordinates.
-    pos_left:
-        Same position measured from the left edge (alias of pos_x for backwards compatibility).
+    (pos_x, q_ratio):
+        ``pos_x`` is the estimated center position along x in strip coordinates, or None when
+        the sdrm quality check fails. ``q_ratio`` is the SDRM quality ratio (see ``sdrm_2``);
+        NaN for "argmax" and "moments", and when sdrm falls back to argmax near an edge.
     """
     gray = ensure_gray_f64(image)
     h, w = gray.shape[:2]
@@ -1173,6 +1175,8 @@ def find_center_pixel(
     profile = profile_full[x0:x1]
     xs = np.arange(x0, x1, dtype=np.float64)
 
+    # Only the sdrm method measures a quality ratio.
+    q_ratio = math.nan
     method = search_method.lower().strip()
     if method == "argmax":
         idx = int(np.argmax(profile))
@@ -1606,10 +1610,10 @@ def find_cross_center(
     image: np.ndarray,
     crop_center: tuple[int, int],
     crop_size: tuple[int, int],
-    roi_size: tuple[int, int],
+    roi_size: tuple[int | str, int],
     q_limit:float,
     *,
-    slant: bool = False,
+    nominal_slant: float = DEFAULT_NOMINAL_SLANT_DEG,
     debug: bool = False,
     debug_prefix: str = "dbg",
     subpixel: bool = False,
@@ -1640,7 +1644,7 @@ def find_cross_center(
         crop_size,
         roi_size,
         q_limit,
-        slant=slant,
+        nominal_slant=nominal_slant,
         debug=debug,
         debug_prefix=debug_prefix,
         subpixel=subpixel,
@@ -1660,10 +1664,10 @@ def find_cross_center_detailed(
     image: np.ndarray,
     crop_center: tuple[int, int],
     crop_size: tuple[int, int],
-    roi_size: tuple[int, int],
+    roi_size: tuple[int | str, int],
     q_limit:float,
     *,
-    slant: bool = False,
+    nominal_slant: float = DEFAULT_NOMINAL_SLANT_DEG,
     debug: bool = False,
     debug_prefix: str = "dbg",
     subpixel: bool = False,
@@ -1681,6 +1685,13 @@ def find_cross_center_detailed(
 
     Parameters
     ----------
+    roi_size:
+        (length, depth) of the four ROI strips in px. length is across the line: an int, or
+        "auto" = min(crop width, crop height). An int must be > 0 and not larger than
+        min(crop width, crop height). depth is along the line.
+    nominal_slant:
+        Nominal (designed) reticle rotation relative to the sensor, in degrees (default 6.0).
+        Not used by the measurement yet; to be compared with the measured rotation (R24).
     subpixel, subpixel_neighbors:
         How the SDRM minimum is read (integer, or quadratic fit over ``subpixel_neighbors``
         samples on each side). Off by default (integer SDRM offsets). Applies to both passes.
@@ -1760,14 +1771,21 @@ def find_cross_center_detailed(
 
     cx_crop, cy_crop = int(crop_center[0]), int(crop_center[1])
     crop_w, crop_h = int(crop_size[0]), int(crop_size[1])
-    roi_w, roi_h = int(roi_size[0]), int(roi_size[1])
-    roi_w  = min(crop_w,crop_h)
-    roi_w_v = crop_h
-    roi_w_h = crop_h
-
+    roi_length, roi_h = roi_size[0], int(roi_size[1])
 
     if crop_w <= 0 or crop_h <= 0:
         raise ValueError("crop_size values must be > 0")
+    if roi_length == ROI_LENGTH_AUTO:
+        roi_w = min(crop_w, crop_h)
+    elif isinstance(roi_length, (int, np.integer)) and not isinstance(roi_length, (bool, np.bool_)):
+        roi_w = int(roi_length)
+        if roi_w > min(crop_w, crop_h):
+            raise ValueError(
+                f"roi_size length {roi_w} must not be larger than min(crop width, crop height) = "
+                f"{min(crop_w, crop_h)}"
+            )
+    else:
+        raise ValueError(f"roi_size length must be an int or {ROI_LENGTH_AUTO!r}, got {roi_length!r}")
     if roi_w <= 0 or roi_h <= 0:
         raise ValueError("roi_size values must be > 0")
 
@@ -1849,7 +1867,8 @@ def find_cross_center_detailed(
             )
 
             # LOGGER.debug(f"Quality ratio of center finding: {q_ratio}")
-            if pos_x == None:
+            # A non-finite q also fails when find_center_pixel fell back to argmax (R21).
+            if pos_x is None or not math.isfinite(q_ratio):
                 LOGGER.warning(_roi_quality_failure_text(name, q_ratio))
                 measure_fail = True
                 pos_x=0 # Note - will not be used for computation, because "measure_fail" should trigger
@@ -1885,7 +1904,8 @@ def find_cross_center_detailed(
                 debug_prefix=f"{debug_prefix}_{name}",
             )
 
-            if pos_x == None:
+            # A non-finite q also fails when find_center_pixel fell back to argmax (R21).
+            if pos_x is None or not math.isfinite(q_ratio):
                 LOGGER.warning(_roi_quality_failure_text(name, q_ratio))
                 measure_fail = True
                 pos_x=0 # Note - will not be used for computation, because "measure_fail" should trigger
@@ -2040,8 +2060,6 @@ def find_cross_center_detailed(
         cv2.imwrite(f"{debug_prefix}_overlay.jpg", overlay)
 
         # LOGGER.info("Measured angles (vertical, horizontal): (%.3f, %.3f)", angle_v, angle_h)
-
-    _ = slant  # placeholder for future behavior
 
     return CrossCenterResult(
         center, (angle_v, angle_h), overlay, q_ratio_list, roi_methods_tuple, roi_traces, saturation_tuple,

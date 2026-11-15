@@ -148,7 +148,7 @@ def evaluate(
         apply_overrides(app, overrides)
         mp = app.get_measurement_parameters()
         logging.getLogger(__name__).warning(
-            "Using crop_center=(%d, %d) crop_size=(%d, %d) roi_size=(%d, %d) subpixel=%s subpixel_neighbors=%d "
+            "Using crop_center=(%d, %d) crop_size=(%d, %d) roi_size=(%s, %d) subpixel=%s subpixel_neighbors=%d "
             "profile_mode=%s oversample_step=%g fine_window=%d fine_window_mode=%s refine_search=%g max_refine_shift=%g "
             "gray_mode=%s",
             mp.crop_center_x, mp.crop_center_y, mp.crop_size_x, mp.crop_size_y, mp.roi_size_x, mp.roi_size_y,

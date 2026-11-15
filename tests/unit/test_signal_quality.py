@@ -18,7 +18,7 @@ from autocollimator.target_utils import (
 
 IMAGE_SHAPE = (1088, 1456)  # (h, w): configured sensor size
 CENTER = (872.0, 544.0)  # default crop center
-CROSS_KW = dict(crop_center=(872, 544), crop_size=(1018, 652), roi_size=(500, 20), q_limit=0.5)
+CROSS_KW = dict(crop_center=(872, 544), crop_size=(1018, 652), roi_size=("auto", 20), q_limit=0.5)
 
 
 def _cross(fwhm: float = 6.0, *, center=CENTER, background: float = 30.0, peak: float = 210.0) -> np.ndarray:

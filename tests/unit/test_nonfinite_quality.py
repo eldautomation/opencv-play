@@ -11,7 +11,7 @@ from autocollimator.workflow import _quality_failure_message
 
 from synthetic import BACKGROUND, render_crosshair
 
-CROSS_KW = dict(crop_center=(872, 544), crop_size=(1018, 652), roi_size=(500, 20), q_limit=0.5)
+CROSS_KW = dict(crop_center=(872, 544), crop_size=(1018, 652), roi_size=("auto", 20), q_limit=0.5)
 TOP_ROI_ROWS = slice(200, 260)  # contains the top ROI rows 218..237 of the default crop
 
 

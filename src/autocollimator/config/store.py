@@ -28,6 +28,7 @@ from .models import (
     MeasurementParameters,
     QualityLimits,
     MeasurementOutput,
+    ROI_LENGTH_AUTO,
 )
 
 
@@ -250,6 +251,18 @@ def validate_device_references(device: Device, lib: dict[str, Any]) -> None:
         raise ConfigError(
             f"device.measurement_parameters_id={device.measurement_parameters_id} "
             "not found in library/measurement_parameters.toml"
+        )
+    mp = lib["measurement_parameters_by_id"][device.measurement_parameters_id]
+    if (
+        mp.roi_size_x != ROI_LENGTH_AUTO
+        and mp.presearch.presearch_mode != "off"
+        and mp.roi_size_x > mp.presearch.min_crop_size_px
+    ):
+        # A pre-search crop is at least min_crop_size_px; a longer explicit ROI would not fit.
+        raise ConfigError(
+            f"measurement_parameters {mp.id}: roi_size_x ({mp.roi_size_x}) must not be larger than "
+            f"presearch.min_crop_size_px ({mp.presearch.min_crop_size_px}) when the pre-search is on "
+            f"(use roi_size_x = \"{ROI_LENGTH_AUTO}\")"
         )
     if device.quality_limits_id not in lib["quality_limits_by_id"]:
         raise ConfigError(

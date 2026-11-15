@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import warnings
 from dataclasses import dataclass, field
 from typing import Optional
@@ -102,6 +103,10 @@ PROFILE_MODES = ("average", "deskew")
 # How a BGR image is reduced to one channel (also used by target_utils). "luma" is cv2 BGR2GRAY.
 GRAY_MODES = ("luma", "green", "max")
 FINE_WINDOW_MODES = ("fixed", "adaptive")
+# roi_size_x value meaning "ROI length = min(crop width, crop height)" (also used by target_utils).
+ROI_LENGTH_AUTO = "auto"
+# Default nominal (designed) reticle rotation relative to the sensor, in degrees (R24).
+DEFAULT_NOMINAL_SLANT_DEG = 6.0
 OVERSAMPLE_STEP_RANGE = (0.02, 0.5)
 REFINE_SEARCH_RANGE = (0.5, 3.0)
 MAX_REFINE_SHIFT_RANGE = (0.1, 3.0)
@@ -118,6 +123,21 @@ ROI_METHODS = (
     "fallback:shift",
     "fallback",
 )
+
+
+def _require_roi_length(name: str, v) -> int | str:
+    # An int > 0 or "auto"; the upper limit (the crop) is checked by MeasurementParameters.
+    if v == ROI_LENGTH_AUTO:
+        return v
+    if isinstance(v, bool) or not isinstance(v, int) or v <= 0:
+        raise ValueError(f"{name} must be an int > 0 or {ROI_LENGTH_AUTO!r}, got {v!r}")
+    return v
+
+
+def _require_finite_float(name: str, v) -> float:
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+        raise ValueError(f"{name} must be a finite number, got {v!r}")
+    return float(v)
 
 
 def _require_profile_mode(name: str, v) -> str:
@@ -513,7 +533,10 @@ class MeasurementParameters:
     crop_center_y: int
     crop_size_x: int
     crop_size_y: int
-    roi_size_x: int
+    # ROI length along the line's normal (px): an int, or "auto" = min(crop width, crop height).
+    # An int must not exceed the crop (and, for the device's active parameters with the
+    # pre-search on, min_crop_size_px: checked by store.validate_device_references).
+    roi_size_x: int | str
     roi_size_y: int
     # Optional in TOML; defaults keep the original integer SDRM centering.
     subpixel: bool = False
@@ -530,12 +553,24 @@ class MeasurementParameters:
     gray_mode: str = "luma"
     # Optional in TOML ([measurement_parameters.presearch]); the defaults keep the pre-search off.
     presearch: PresearchParameters = field(default_factory=PresearchParameters)
+    # Optional in TOML. Nominal (designed) reticle rotation relative to the sensor, degrees.
+    # Not used by the measurement yet; to be compared with the measured rotation (R24).
+    nominal_slant: float = DEFAULT_NOMINAL_SLANT_DEG
 
     def __post_init__(self) -> None:
         if not isinstance(self.presearch, PresearchParameters):
             raise TypeError(
                 f"measurement_parameters.presearch must be PresearchParameters, got {type(self.presearch).__name__}"
             )
+        _require_roi_length("measurement_parameters.roi_size_x", self.roi_size_x)
+        if self.roi_size_x != ROI_LENGTH_AUTO:
+            crop_min = min(self.crop_size_x, self.crop_size_y)
+            if self.roi_size_x > crop_min:
+                raise ValueError(
+                    f"measurement_parameters.roi_size_x ({self.roi_size_x}) must not be larger than the crop "
+                    f"(min(crop_size_x, crop_size_y) = {crop_min})"
+                )
+        _require_finite_float("measurement_parameters.nominal_slant", self.nominal_slant)
         _require_bool("measurement_parameters.subpixel", self.subpixel)
         _require_subpixel_neighbors("measurement_parameters.subpixel_neighbors", self.subpixel_neighbors)
         _require_profile_mode("measurement_parameters.profile_mode", self.profile_mode)
@@ -560,7 +595,7 @@ class MeasurementParameters:
             crop_center_y=_require_int("measurement_parameters.crop_center_y", d["crop_center_y"]),
             crop_size_x=_require_int("measurement_parameters.crop_size_x", d["crop_size_x"]),
             crop_size_y=_require_int("measurement_parameters.crop_size_y", d["crop_size_y"]),
-            roi_size_x=_require_int("measurement_parameters.roi_size_x", d["roi_size_x"]),
+            roi_size_x=_require_roi_length("measurement_parameters.roi_size_x", d.get("roi_size_x", ROI_LENGTH_AUTO)),
             roi_size_y=_require_int("measurement_parameters.roi_size_y", d["roi_size_y"]),
             subpixel=_require_bool("measurement_parameters.subpixel", d.get("subpixel", False)),
             subpixel_neighbors=_require_subpixel_neighbors(
@@ -583,6 +618,9 @@ class MeasurementParameters:
             gray_mode=_require_gray_mode("measurement_parameters.gray_mode", d.get("gray_mode", "luma")),
             presearch=PresearchParameters.from_dict(
                 _require_table("measurement_parameters.presearch", d.get("presearch", {}))
+            ),
+            nominal_slant=_require_finite_float(
+                "measurement_parameters.nominal_slant", d.get("nominal_slant", DEFAULT_NOMINAL_SLANT_DEG)
             ),
         )
 

@@ -46,7 +46,7 @@ def test_blob_22_default_workflow_unchanged(tmp_path: Path) -> None:
 @pytest.mark.integration
 def test_blob_22_explicit_luma_is_identical_to_default() -> None:
     img = _blob_22()
-    kw = dict(crop_center=(872, 544), crop_size=(1018, 652), roi_size=(500, 20), q_limit=0.5)
+    kw = dict(crop_center=(872, 544), crop_size=(1018, 652), roi_size=("auto", 20), q_limit=0.5)
     default = find_cross_center_detailed(img, **kw)
     luma = find_cross_center_detailed(img, gray_mode="luma", **kw)
     assert luma.center == default.center

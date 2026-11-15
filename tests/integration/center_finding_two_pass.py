@@ -53,7 +53,7 @@ def measure_two_pass(
         image=image,
         crop_center=(int(pass1[0]), int(pass1[1])),
         crop_size=(size, size),
-        roi_size=(int(mps.roi_size_x), int(mps.roi_size_y)),
+        roi_size=(mps.roi_size_x, int(mps.roi_size_y)),
         q_limit=qls.rss_ratio,
         subpixel=mps.subpixel,
         subpixel_neighbors=mps.subpixel_neighbors,

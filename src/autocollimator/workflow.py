@@ -288,18 +288,8 @@ def run_center_finding_on_image(
 
     crop_center = (int(mps.crop_center_x),int(mps.crop_center_y))
     crop_size = (int(mps.crop_size_x),int(mps.crop_size_y))
-    roi_size = (int(mps.roi_size_x),int(mps.roi_size_y))
-
-
-    if (
-        not isinstance(roi_size, tuple)
-        or len(roi_size) != 2
-        or not all(isinstance(v, int) for v in roi_size)
-    ):
-        raise TypeError("roi_size must be a tuple[int, int]")
-
-    if roi_size[0] <= 0 or roi_size[1] <= 0:
-        raise ValueError(f"roi_size must contain positive integers, got {roi_size}")
+    # roi_size_x is an int or "auto"; MeasurementParameters and find_cross_center validate it.
+    roi_size = (mps.roi_size_x, int(mps.roi_size_y))
 
     if not isinstance(debug, bool):
         raise TypeError(f"debug must be bool, got {type(debug).__name__}")
@@ -366,6 +356,7 @@ def run_center_finding_on_image(
             crop_size=size,
             roi_size=roi_size,
             q_limit=qls.rss_ratio,
+            nominal_slant=mps.nominal_slant,
             subpixel=mps.subpixel,
             subpixel_neighbors=mps.subpixel_neighbors,
             profile_mode=mps.profile_mode,

@@ -30,7 +30,7 @@ def default_params(tmp_path_factory):
     return {
         "crop_center": (int(mps.crop_center_x), int(mps.crop_center_y)),
         "crop_size": (int(mps.crop_size_x), int(mps.crop_size_y)),
-        "roi_size": (int(mps.roi_size_x), int(mps.roi_size_y)),
+        "roi_size": (mps.roi_size_x, int(mps.roi_size_y)),
         "q_limit": qls.rss_ratio,
     }
 

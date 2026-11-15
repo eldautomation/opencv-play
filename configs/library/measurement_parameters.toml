@@ -5,8 +5,9 @@ crop_center_x = 872
 crop_center_y = 544
 crop_size_x = 1018
 crop_size_y = 652
-roi_size_x = 500
+roi_size_x = "auto"   # ROI length across the line, px: int, or "auto" = min(crop_size_x, crop_size_y)
 roi_size_y = 20
+# nominal_slant = 6.0   # nominal (designed) reticle rotation, degrees; not used yet (R24)
 
 # Pre-search (R4), optional; without this table the defaults below apply (pre-search off).
 # [measurement_parameters.presearch]
