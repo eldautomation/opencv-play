@@ -239,7 +239,9 @@ def test_adaptive_window_never_shrinks_below_fine_window(fine_window):
 @pytest.mark.parametrize("fwhm", [6.0, 40.0])
 def test_deskew_records_adaptive_window_per_roi(fwhm):
     img = _tilted_cross(fwhm)
-    result = find_cross_center_detailed(img, profile_mode="deskew", fine_window=40, **CROSS_KW)
+    result = find_cross_center_detailed(
+        img, profile_mode="deskew", fine_window=40, fine_window_mode="adaptive", **CROSS_KW
+    )
     assert result.center is not None
     assert len(result.fine_windows) == 4
     assert all(w is not None and w >= 40 for w in result.fine_windows)
@@ -249,6 +251,27 @@ def test_deskew_records_adaptive_window_per_roi(fwhm):
     else:
         assert all(w == pytest.approx(60.0, abs=2.0) for w in result.fine_windows)
         assert all(w == 1.5 * t.line_width for w, t in zip(result.fine_windows, result.rois))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("fwhm", [6.0, 40.0])
+def test_fixed_mode_uses_fine_window_and_no_estimate(fwhm):
+    result = find_cross_center_detailed(_tilted_cross(fwhm), profile_mode="deskew", fine_window=40, **CROSS_KW)
+    assert result.center is not None
+    assert result.fine_windows == (40.0,) * 4
+    assert all(t.line_width is None for t in result.rois)
+    explicit = find_cross_center_detailed(
+        _tilted_cross(fwhm), profile_mode="deskew", fine_window=40, fine_window_mode="fixed", **CROSS_KW
+    )
+    assert explicit.center == result.center
+    assert [t.pos2 for t in explicit.rois] == [t.pos2 for t in result.rois]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("mode", ["Adaptive", "auto", ""])
+def test_fine_window_mode_unknown_raises(mode):
+    with pytest.raises(ValueError, match="fine_window_mode must be one of"):
+        find_cross_center_detailed(_tilted_cross(6.0), profile_mode="deskew", fine_window_mode=mode, **CROSS_KW)
 
 
 @pytest.mark.unit

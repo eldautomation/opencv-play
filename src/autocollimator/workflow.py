@@ -229,7 +229,7 @@ def run_center_finding_on_image(
     LOGGER.info(
         "Running center-finding workflow with crop_center=%s crop_size=%s roi_size=%s "
         "subpixel=%s subpixel_neighbors=%s profile_mode=%s oversample_step=%s fine_window=%s "
-        "refine_search=%s max_refine_shift=%s gray_mode=%s debug=%s",
+        "fine_window_mode=%s refine_search=%s max_refine_shift=%s gray_mode=%s debug=%s",
         crop_center,
         crop_size,
         roi_size,
@@ -238,6 +238,7 @@ def run_center_finding_on_image(
         mps.profile_mode,
         mps.oversample_step,
         mps.fine_window,
+        mps.fine_window_mode,
         mps.refine_search,
         mps.max_refine_shift,
         mps.gray_mode,
@@ -255,6 +256,7 @@ def run_center_finding_on_image(
         profile_mode=mps.profile_mode,
         oversample_step=mps.oversample_step,
         fine_window=mps.fine_window,
+        fine_window_mode=mps.fine_window_mode,
         refine_search=mps.refine_search,
         max_refine_shift=mps.max_refine_shift,
         gray_mode=mps.gray_mode,

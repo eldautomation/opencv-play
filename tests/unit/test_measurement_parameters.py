@@ -190,3 +190,25 @@ def test_measurement_parameters_invalid_gray_mode_raises(value):
 def test_measurement_parameters_gray_mode_override_is_validated():
     with pytest.raises(ValueError, match="gray_mode must be one of"):
         replace(_load(), gray_mode="red")
+
+
+@pytest.mark.unit
+def test_measurement_parameters_fine_window_mode_defaults_and_loads():
+    assert _load().fine_window_mode == "fixed"
+    for mp in load_library(PROJECT_ROOT / "configs")["measurement_parameters_by_id"].values():
+        assert mp.fine_window_mode == "fixed"
+    assert _load('fine_window_mode = "adaptive"\n').fine_window_mode == "adaptive"
+    assert _load('fine_window_mode = "fixed"\n').fine_window_mode == "fixed"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("value", ['"Adaptive"', '"auto"', '""', "1", "true"])
+def test_measurement_parameters_invalid_fine_window_mode_raises(value):
+    with pytest.raises(ValueError, match="fine_window_mode must be one of"):
+        _load(f"fine_window_mode = {value}\n")
+
+
+@pytest.mark.unit
+def test_measurement_parameters_fine_window_mode_override_is_validated():
+    with pytest.raises(ValueError, match="fine_window_mode must be one of"):
+        replace(_load(), fine_window_mode="auto")

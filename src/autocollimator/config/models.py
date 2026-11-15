@@ -60,6 +60,7 @@ def _require_subpixel_neighbors(name: str, v) -> int:
 PROFILE_MODES = ("average", "deskew")
 # How a BGR image is reduced to one channel (also used by target_utils). "luma" is cv2 BGR2GRAY.
 GRAY_MODES = ("luma", "green", "max")
+FINE_WINDOW_MODES = ("fixed", "adaptive")
 OVERSAMPLE_STEP_RANGE = (0.02, 0.5)
 REFINE_SEARCH_RANGE = (0.5, 3.0)
 MAX_REFINE_SHIFT_RANGE = (0.1, 3.0)
@@ -85,6 +86,12 @@ def _require_profile_mode(name: str, v) -> str:
 def _require_gray_mode(name: str, v) -> str:
     if v not in GRAY_MODES:
         raise ValueError(f"{name} must be one of {GRAY_MODES}, got {v!r}")
+    return v
+
+
+def _require_fine_window_mode(name: str, v) -> str:
+    if v not in FINE_WINDOW_MODES:
+        raise ValueError(f"{name} must be one of {FINE_WINDOW_MODES}, got {v!r}")
     return v
 
 
@@ -265,6 +272,8 @@ class MeasurementParameters:
     profile_mode: str = "average"
     oversample_step: float = 0.1
     fine_window: int = 40
+    # Optional in TOML; "fixed" uses fine_window as is, "adaptive" grows it to 1.5 x line FWHM.
+    fine_window_mode: str = "fixed"
     refine_search: float = 1.5
     max_refine_shift: float = 0.75
     # Optional in TOML; "luma" keeps the original cv2 grayscale conversion.
@@ -276,6 +285,7 @@ class MeasurementParameters:
         _require_profile_mode("measurement_parameters.profile_mode", self.profile_mode)
         _require_oversample_step("measurement_parameters.oversample_step", self.oversample_step)
         _require_fine_window("measurement_parameters.fine_window", self.fine_window)
+        _require_fine_window_mode("measurement_parameters.fine_window_mode", self.fine_window_mode)
         _require_refine_search("measurement_parameters.refine_search", self.refine_search)
         _require_max_refine_shift("measurement_parameters.max_refine_shift", self.max_refine_shift)
         _require_gray_mode("measurement_parameters.gray_mode", self.gray_mode)
@@ -305,6 +315,9 @@ class MeasurementParameters:
                 "measurement_parameters.oversample_step", d.get("oversample_step", 0.1)
             ),
             fine_window=_require_fine_window("measurement_parameters.fine_window", d.get("fine_window", 40)),
+            fine_window_mode=_require_fine_window_mode(
+                "measurement_parameters.fine_window_mode", d.get("fine_window_mode", "fixed")
+            ),
             refine_search=_require_refine_search(
                 "measurement_parameters.refine_search", d.get("refine_search", 1.5)
             ),
@@ -372,8 +385,8 @@ class MeasuredValues:
     saturation_s1: Optional[float] = None
     saturation_s2: Optional[float] = None
     saturation_s3: Optional[float] = None
-    # Deskew half-width in px used per ROI (adaptive, >= fine_window); None when pass 2 did
-    # not run (average mode, failed pass 1) or in older records.
+    # Deskew half-width in px used per ROI (fine_window, or >= fine_window when adaptive); None
+    # when pass 2 did not run (average mode, failed pass 1) or in older records.
     fine_window_used_f0: Optional[float] = None
     fine_window_used_f1: Optional[float] = None
     fine_window_used_f2: Optional[float] = None

@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Iterable, Sequence
 
 from autocollimator.config.models import (
+    FINE_WINDOW_MODES,
     GRAY_MODES,
     MAX_REFINE_SHIFT_RANGE,
     OVERSAMPLE_STEP_RANGE,
@@ -1290,8 +1291,9 @@ class RoiTrace:
     pos2: float | None
     # Fraction of ROI pixels with any channel >= SATURATION_LEVEL (original image, uint8 scale).
     saturation: float | None = None
-    # Pass-1 line FWHM estimate and the deskew half-width given to pass 2 (see
-    # _adaptive_fine_window); None when pass 2 did not run or the FWHM could not be estimated.
+    # Deskew half-width given to pass 2, and the pass-1 line FWHM estimate it was derived from
+    # in adaptive mode (see _adaptive_fine_window). Both None when pass 2 did not run;
+    # line_width is also None in fixed mode or when the FWHM could not be estimated.
     line_width: float | None = None
     fine_window_used: float | None = None
 
@@ -1312,8 +1314,8 @@ class CrossCenterResult:
     rois: tuple[RoiTrace, ...] = ()
     # Saturated-pixel fraction per ROI, in ROI_NAMES order (see roi_saturation_fraction).
     saturation: tuple[float, ...] = ()
-    # Deskew half-width in px given to pass 2 per ROI, in ROI_NAMES order; None when pass 2
-    # did not run for that ROI (average mode, or pass 1 failed).
+    # Deskew half-width in px given to pass 2 per ROI, in ROI_NAMES order (fine_window in fixed
+    # mode); None when pass 2 did not run for that ROI (average mode, or pass 1 failed).
     fine_windows: tuple[float | None, ...] = ()
 
 
@@ -1572,6 +1574,7 @@ def find_cross_center(
     refine_search: float = DESKEW_SEARCH_PX,
     max_refine_shift: float = DESKEW_MAX_REFINE_SHIFT_PX,
     gray_mode: str = "luma",
+    fine_window_mode: str = "fixed",
 ) -> tuple[tuple[float, float] | None, tuple[float, float] | None, np.ndarray, list[float]]:
     """
     Find the center of a crosshair and estimate tilt angles.
@@ -1602,6 +1605,7 @@ def find_cross_center(
         refine_search=refine_search,
         max_refine_shift=max_refine_shift,
         gray_mode=gray_mode,
+        fine_window_mode=fine_window_mode,
     )
     return result.center, result.angles, result.overlay, result.q_ratio_list
 
@@ -1624,6 +1628,7 @@ def find_cross_center_detailed(
     refine_search: float = DESKEW_SEARCH_PX,
     max_refine_shift: float = DESKEW_MAX_REFINE_SHIFT_PX,
     gray_mode: str = "luma",
+    fine_window_mode: str = "fixed",
 ) -> CrossCenterResult:
     """
     Find the center of a crosshair and estimate tilt angles.
@@ -1643,9 +1648,13 @@ def find_cross_center_detailed(
     oversample_step:
         Bin width of the deskewed profile in px, 0.02..0.5 (deskew only).
     fine_window:
-        Minimum half-width in px of the deskewed profile around the pass-1 estimate (deskew
-        only). Per ROI the half-width used is max(fine_window, 1.5 * line FWHM), with the FWHM
-        estimated from the pass-1 profile; it is recorded in ``fine_windows``.
+        Half-width in px of the deskewed profile around the pass-1 estimate (deskew only); a
+        minimum when ``fine_window_mode`` is "adaptive". The half-width used per ROI is
+        recorded in ``fine_windows``.
+    fine_window_mode:
+        "fixed" (default): every ROI uses ``fine_window``. "adaptive": per ROI the half-width
+        is max(fine_window, 1.5 * line FWHM), with the FWHM estimated from the pass-1 profile
+        (see ``_estimate_line_fwhm``). Deskew only.
     refine_search:
         Pass-2 search half-range in px around the pass-1 estimate, 0.5..3.0 and smaller than
         ``fine_window`` (deskew only). A ROI whose fine minimum lies at either end of this
@@ -1684,6 +1693,8 @@ def find_cross_center_detailed(
     _validate_profile_options(profile_mode, oversample_step, fine_window, refine_search, max_refine_shift)
     if gray_mode not in GRAY_MODES:
         raise ValueError(f"gray_mode must be one of {GRAY_MODES}, got {gray_mode!r}")
+    if fine_window_mode not in FINE_WINDOW_MODES:
+        raise ValueError(f"fine_window_mode must be one of {FINE_WINDOW_MODES}, got {fine_window_mode!r}")
 
     if image is None:
         raise ValueError("image is None")
@@ -1863,12 +1874,15 @@ def find_cross_center_detailed(
         for name in ROI_NAMES:
             x0, y0, _x1, _y1, roi, pos1 = roi_data[name]
             roi_slopes[name] = slope_v if name in ("top", "bottom") else slope_h
-            window, line_width = _adaptive_fine_window(roi.mean(axis=0), pos1, fine_window)
-            roi_window[name], roi_line_width[name] = window, line_width
-            LOGGER.debug(
-                "Deskew %s: pass-1 line FWHM %s px, fine_window %.4g px (minimum %d)",
-                name, "unknown" if line_width is None else f"{line_width:.4g}", window, fine_window,
-            )
+            if fine_window_mode == "adaptive":
+                window, line_width = _adaptive_fine_window(roi.mean(axis=0), pos1, fine_window)
+                LOGGER.debug(
+                    "Deskew %s: pass-1 line FWHM %s px, fine_window %.4g px (minimum %d)",
+                    name, "unknown" if line_width is None else f"{line_width:.4g}", window, fine_window,
+                )
+            else:
+                window, line_width = fine_window, None
+            roi_window[name], roi_line_width[name] = float(window), line_width
             method, pos2 = _deskew_position(
                 roi,
                 pos1,

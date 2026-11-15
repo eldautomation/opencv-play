@@ -66,7 +66,8 @@ def mode_label(mp) -> str:
     readout = f"subpixel n={mp.subpixel_neighbors}" if mp.subpixel else "integer"
     label = f"{mp.profile_mode} / {readout} / gray {mp.gray_mode}"
     if mp.profile_mode == "deskew":
-        label += (f" (step {mp.oversample_step:g}, window >= {mp.fine_window} (adaptive), search {mp.refine_search:g},"
+        window = f">= {mp.fine_window} (adaptive)" if mp.fine_window_mode == "adaptive" else f"{mp.fine_window}"
+        label += (f" (step {mp.oversample_step:g}, window {window}, search {mp.refine_search:g},"
                   f" max shift {mp.max_refine_shift:g})")
     return label
 
@@ -95,10 +96,11 @@ def evaluate(image_dir: Path, config_dir: Path, run_dir: Path, overrides: dict) 
         mp = app.get_measurement_parameters()
         logging.getLogger(__name__).warning(
             "Using crop_center=(%d, %d) crop_size=(%d, %d) roi_size=(%d, %d) subpixel=%s subpixel_neighbors=%d "
-            "profile_mode=%s oversample_step=%g fine_window=%d refine_search=%g max_refine_shift=%g gray_mode=%s",
+            "profile_mode=%s oversample_step=%g fine_window=%d fine_window_mode=%s refine_search=%g max_refine_shift=%g "
+            "gray_mode=%s",
             mp.crop_center_x, mp.crop_center_y, mp.crop_size_x, mp.crop_size_y, mp.roi_size_x, mp.roi_size_y,
             mp.subpixel, mp.subpixel_neighbors, mp.profile_mode, mp.oversample_step, mp.fine_window,
-            mp.refine_search, mp.max_refine_shift, mp.gray_mode,
+            mp.fine_window_mode, mp.refine_search, mp.max_refine_shift, mp.gray_mode,
         )
         mode = mode_label(mp)
         sensor = app.get_image_sensor()
@@ -265,8 +267,11 @@ def main() -> int:
     ap.add_argument("--oversample-step", type=float, metavar="PX",
                     help="Bin width of the deskewed profile in px, 0.02-0.5 (used with --profile-mode deskew)")
     ap.add_argument("--fine-window", type=int, metavar="PX",
-                    help="Minimum half-width of the deskewed profile in px; grows to 1.5 x line FWHM "
+                    help="Half-width of the deskewed profile in px; a minimum with --fine-window-mode adaptive "
                          "(used with --profile-mode deskew)")
+    ap.add_argument("--fine-window-mode", choices=("fixed", "adaptive"),
+                    help="fixed: use --fine-window as is; adaptive: grow it to 1.5 x line FWHM per ROI "
+                         "(measurement_parameters.fine_window_mode, used with --profile-mode deskew)")
     ap.add_argument("--refine-search", type=float, metavar="PX",
                     help="Pass-2 search half-range in px, 0.5-3.0 (used with --profile-mode deskew)")
     ap.add_argument("--max-refine-shift", type=float, metavar="PX",
@@ -292,6 +297,8 @@ def main() -> int:
         overrides.update(oversample_step=args.oversample_step)
     if args.fine_window is not None:
         overrides.update(fine_window=args.fine_window)
+    if args.fine_window_mode:
+        overrides.update(fine_window_mode=args.fine_window_mode)
     if args.refine_search is not None:
         overrides.update(refine_search=args.refine_search)
     if args.max_refine_shift is not None:
