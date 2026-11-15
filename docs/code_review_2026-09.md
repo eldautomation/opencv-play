@@ -103,18 +103,22 @@ missing argument.
 
 ### R11 — Wrong type annotations
 `workflow.run_center_finding_on_image` and `find_cross_center` return annotations don't match returns.
+Status: resolved in Phase H (2026-11-15). Those two already matched by then. Fixed find_center_pixel (`float | None`), the undefined `Line`/`Point` in line_intersection, `_validate_line` and `_parse_enum`; other mypy findings are left for R25.
 
 ### R12 — Unused / overridden parameters and a latent NameError
 `roi_w` is overwritten with `min(crop_w, crop_h)` so `roi_size_x` config is ignored; `roi_w_v`,
 `roi_w_h`, `slant` unused. `find_center_pixel` raises NameError on `q_ratio` for argmax/moments.
+Status: resolved in Phase H (2026-11-15). `roi_size_x` is an int (honored) or "auto" (= min(crop w, h), the default); `roi_w_v`/`roi_w_h` are removed; `slant` is now `nominal_slant` (deg, default 6.0, see R24); argmax/moments return q = NaN.
 
 ### R13 — Output filename collisions
 Prefix has 1-second resolution; demo sleeps 1.7 s to avoid overwrites. Add milliseconds or a counter.
+Status: resolved in Phase H (2026-11-15). The prefix has milliseconds, a counter suffix is added if a bundle file exists, and the demo sleep is removed.
 
 ### R14 — Dead code and Pi performance
 Remove old `sdrm`, `run_demo`, unreachable `_default_crop_from_image` branch, stray `print`s, and the
 discarded `pairs` computation. Import matplotlib lazily inside debug plotting. Consider Git LFS for
 test images (repo zip is ~307 MB). Add `.gitattributes` for consistent line endings.
+Status: resolved in Phase H (2026-11-15). Removed the dead code, and matplotlib is now imported only inside the debug plot. The test images were already in Git LFS. Old experiments are moved to archive/, and `.gitattributes` (LF for all text files) comes in the Phase H line-ending commit.
 
 ### R15 — blob-16 position differs between crops
 blob-16 measured with the configured crop and with the pre-search crop differed by ~15 px.
@@ -179,6 +183,7 @@ A perfectly flat ROI gives q = NaN; sdrm_2's check `q > q_limit` is False for Na
 and the measurement can be reported as a success (R1-type false success). The pre-search
 validation rejects NaN; the measurement path does not yet. Fix: treat a non-finite q as a quality
 failure with a clear reason.
+Status: resolved in Phase H (2026-11-15). sdrm_2 and find_cross_center reject a non-finite q, with the message "ROI <name>: quality ratio not finite (flat profile)". No test image changed status.
 
 ### R22 — ROI edge clipping gives silently biased results
 When a line lies at the edge of an ROI (cut off), SDRM is pulled toward the clipped side but can
@@ -194,3 +199,9 @@ sample them differently. This exceeds the ~0.3 px target. Crops centered on the 
 (pre-search/track) sample the same reticle parts as the spot moves, which may make differential
 measurements more consistent; to be verified with bench data. Remedy planned: several strips per
 arm with a robust line fit (robustness step 3).
+
+### R24 — Compare measured rotation with nominal slant
+`nominal_slant` (degrees, default 6.0) records the designed reticle rotation relative to the sensor. Add a function that compares the measured rotation (instrument layer, Phase F) with the nominal slant and reports the deviation, e.g. as a setup/assembly check (reticle mounted at the intended angle) and as a sanity check for deskew mode, which needs a minimum tilt (see R20). Define the tolerance and the reporting format when implementing.
+
+### R25 — Run code-quality tools (ruff, mypy)
+ruff and mypy are in the dev extras but have never been run. Run both on src/ and tests/, fix style and type issues that do not change logic, and report anything that would need a logic change. To be done as its own phase.
