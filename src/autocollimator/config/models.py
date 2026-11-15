@@ -10,6 +10,12 @@ def _require_int(name: str, v) -> int:
     return v
 
 
+def _opt_int(name: str, v) -> Optional[int]:
+    if v is None:
+        return None
+    return _require_int(name, v)
+
+
 def _require_float(name: str, v) -> float:
     if isinstance(v, bool) or not isinstance(v, (int, float)):
         raise TypeError(f"{name} must be float, got {type(v).__name__}")
@@ -393,6 +399,9 @@ class MeasuredValues:
     fine_window_used_f1: Optional[float] = None
     fine_window_used_f2: Optional[float] = None
     fine_window_used_f3: Optional[float] = None
+    # Size of the measured image in pixels; None in records written before it was stored.
+    image_width: Optional[int] = None
+    image_height: Optional[int] = None
 
     def __post_init__(self) -> None:
         for name in ("roi_method_m0", "roi_method_m1", "roi_method_m2", "roi_method_m3"):
@@ -444,6 +453,8 @@ class MeasuredValues:
             fine_window_used_f1=_opt_window("measured_values.fine_window_used_f1", d.get("fine_window_used_f1")),
             fine_window_used_f2=_opt_window("measured_values.fine_window_used_f2", d.get("fine_window_used_f2")),
             fine_window_used_f3=_opt_window("measured_values.fine_window_used_f3", d.get("fine_window_used_f3")),
+            image_width=_opt_int("measured_values.image_width", d.get("image_width")),
+            image_height=_opt_int("measured_values.image_height", d.get("image_height")),
         )
 
 

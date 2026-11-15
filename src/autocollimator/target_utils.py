@@ -30,6 +30,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
 
+from autocollimator.units import wrap_symmetric
+
 from autocollimator.config.models import (
     FINE_WINDOW_MODES,
     GRAY_MODES,
@@ -1609,7 +1611,7 @@ def find_cross_center(
     fine_window_mode: str = "fixed",
 ) -> tuple[tuple[float, float] | None, tuple[float, float] | None, np.ndarray, list[float]]:
     """
-    Find the center of a crosshair and estimate tilt angles.
+    Find the center of a crosshair and its two line angles.
 
     Same as ``find_cross_center_detailed`` but returns a tuple and drops the per-ROI
     profile methods.
@@ -1663,7 +1665,7 @@ def find_cross_center_detailed(
     fine_window_mode: str = "fixed",
 ) -> CrossCenterResult:
     """
-    Find the center of a crosshair and estimate tilt angles.
+    Find the center of a crosshair and its two line angles.
 
     Parameters
     ----------
@@ -1702,7 +1704,10 @@ def find_cross_center_detailed(
     -------
     CrossCenterResult
         ``center`` and ``angles`` are None if any ROI fails the quality check. The quality
-        check is made in pass 1 only, so pass 2 never causes a failure.
+        check is made in pass 1 only, so pass 2 never causes a failure. ``angles`` is
+        (a0, a1) in degrees: a0 = vertical line (top/bottom ROIs) from vertical, a1 =
+        horizontal line (left/right ROIs) from horizontal, both counter-clockwise positive
+        with Y up and wrapped to (-45, 45] (the crosshair is symmetric under 90 deg, R3).
 
     Notes
     -----
@@ -1998,19 +2003,21 @@ def find_cross_center_detailed(
     l2 = (left, right)
     center = line_intersection(l1, l2)
 
-    # Angles: use atan2 for robustness
-    # Vertical tilt (from vertical): dx over dy between top and bottom
+    # Line angles (atan2 for robustness), counter-clockwise positive as seen with Y up.
+    # Vertical line (from vertical): dx over dy between top and bottom. Top has the smaller
+    # image y, so atan2 gives about +-180 deg for a vertical line; the wrap below removes that.
     dx_v = top[0] - bottom[0]
     dy_v = top[1] - bottom[1]
     angle_v = float(np.degrees(np.arctan2(dx_v, dy_v)))
 
-    # Horizontal tilt (from horizontal): (-dy) over dx between right and left
+    # Horizontal line (from horizontal): (-dy) over dx between right and left
     dy_h = (right[1] - left[1])
     dx_h = (right[0] - left[0])
     angle_h = float(np.degrees(np.arctan2(-dy_h, dx_h)))
 
-    if angle_h<0:angle_h = angle_h+180
-    if angle_v<0:angle_v = angle_v+180
+    # A crosshair is symmetric under 90 deg: wrap each line angle to (-45, 45] (R3).
+    angle_h = wrap_symmetric(angle_h, 90.0)
+    angle_v = wrap_symmetric(angle_v, 90.0)
 
     if debug:
         overlay = draw_crosshair(overlay, center, leg_length=12, width=3, color=(0, 0, 255))
