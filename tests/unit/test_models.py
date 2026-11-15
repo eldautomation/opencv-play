@@ -73,3 +73,36 @@ def test_measured_values_from_dict_success_rejects_null(field):
 def test_measured_values_from_dict_round_trips_success():
     mv = MeasuredValues.from_dict(_values())
     assert MeasuredValues.from_dict(dataclasses.asdict(mv)) == mv
+
+
+ROI_METHOD_FIELDS = ("roi_method_m0", "roi_method_m1", "roi_method_m2", "roi_method_m3")
+
+
+@pytest.mark.unit
+def test_measured_values_roi_methods_default_to_average():
+    mv = MeasuredValues(**_values())
+    assert all(getattr(mv, name) == "average" for name in ROI_METHOD_FIELDS)
+
+
+@pytest.mark.unit
+def test_measured_values_from_dict_without_roi_methods_defaults_to_average():
+    # Measurement files written before the deskew mode have no roi_method_* keys.
+    mv = MeasuredValues.from_dict(_values())
+    assert all(getattr(mv, name) == "average" for name in ROI_METHOD_FIELDS)
+
+
+@pytest.mark.unit
+def test_measured_values_roi_methods_round_trip():
+    methods = dict(zip(ROI_METHOD_FIELDS, ("deskew", "fallback", "deskew", "deskew")))
+    mv = MeasuredValues(**_values(**methods))
+    assert MeasuredValues.from_dict(dataclasses.asdict(mv)) == mv
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("field", ROI_METHOD_FIELDS)
+@pytest.mark.parametrize("value", ["", "Deskew", None, 1])
+def test_measured_values_invalid_roi_method_raises(field, value):
+    with pytest.raises(ValueError, match=f"{field} must be one of"):
+        MeasuredValues(**_values(**{field: value}))
+    with pytest.raises(ValueError, match=f"{field} must be one of"):
+        MeasuredValues.from_dict(_values(**{field: value}))

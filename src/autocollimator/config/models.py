@@ -56,6 +56,38 @@ def _require_subpixel_neighbors(name: str, v) -> int:
     return v
 
 
+# Profile modes for find_cross_center (also used by target_utils).
+PROFILE_MODES = ("average", "deskew")
+OVERSAMPLE_STEP_RANGE = (0.02, 0.5)
+# Per-ROI profile method recorded in MeasuredValues.
+ROI_METHODS = ("average", "deskew", "fallback")
+
+
+def _require_profile_mode(name: str, v) -> str:
+    if v not in PROFILE_MODES:
+        raise ValueError(f"{name} must be one of {PROFILE_MODES}, got {v!r}")
+    return v
+
+
+def _require_oversample_step(name: str, v) -> float:
+    lo, hi = OVERSAMPLE_STEP_RANGE
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not lo <= v <= hi:
+        raise ValueError(f"{name} must be a number in {lo}..{hi}, got {v!r}")
+    return float(v)
+
+
+def _require_fine_window(name: str, v) -> int:
+    if isinstance(v, bool) or not isinstance(v, int) or v < 2:
+        raise ValueError(f"{name} must be an int >= 2, got {v!r}")
+    return v
+
+
+def _require_roi_method(name: str, v) -> str:
+    if v not in ROI_METHODS:
+        raise ValueError(f"{name} must be one of {ROI_METHODS}, got {v!r}")
+    return v
+
+
 @dataclass(frozen=True)
 class ImageSensor:
     id: str
@@ -180,10 +212,17 @@ class MeasurementParameters:
     # Optional in TOML; defaults keep the original integer SDRM centering.
     subpixel: bool = False
     subpixel_neighbors: int = 2
+    # Optional in TOML; "average" keeps the original single-pass profile.
+    profile_mode: str = "average"
+    oversample_step: float = 0.1
+    fine_window: int = 40
 
     def __post_init__(self) -> None:
         _require_bool("measurement_parameters.subpixel", self.subpixel)
         _require_subpixel_neighbors("measurement_parameters.subpixel_neighbors", self.subpixel_neighbors)
+        _require_profile_mode("measurement_parameters.profile_mode", self.profile_mode)
+        _require_oversample_step("measurement_parameters.oversample_step", self.oversample_step)
+        _require_fine_window("measurement_parameters.fine_window", self.fine_window)
 
     @staticmethod
     def from_dict(d: dict) -> "MeasurementParameters":
@@ -200,6 +239,11 @@ class MeasurementParameters:
             subpixel_neighbors=_require_subpixel_neighbors(
                 "measurement_parameters.subpixel_neighbors", d.get("subpixel_neighbors", 2)
             ),
+            profile_mode=_require_profile_mode("measurement_parameters.profile_mode", d.get("profile_mode", "average")),
+            oversample_step=_require_oversample_step(
+                "measurement_parameters.oversample_step", d.get("oversample_step", 0.1)
+            ),
+            fine_window=_require_fine_window("measurement_parameters.fine_window", d.get("fine_window", 40)),
         )
 
 
@@ -249,8 +293,15 @@ class MeasuredValues:
     overlay_hash:str
     success: bool
     message: str
+    # Profile method per ROI (top, bottom, right, left): "average", "deskew" or "fallback".
+    roi_method_m0: str = "average"
+    roi_method_m1: str = "average"
+    roi_method_m2: str = "average"
+    roi_method_m3: str = "average"
 
     def __post_init__(self) -> None:
+        for name in ("roi_method_m0", "roi_method_m1", "roi_method_m2", "roi_method_m3"):
+            _require_roi_method(f"measured_values.{name}", getattr(self, name))
         if self.success:
             missing = [
                 name
@@ -282,6 +333,10 @@ class MeasuredValues:
             overlay_hash=_require_str("measured_values.overlay_hash", d["overlay_hash"]),
             success=_require_bool("success", d["success"]),
             message=_require_str("message", d["message"]),
+            roi_method_m0=_require_roi_method("measured_values.roi_method_m0", d.get("roi_method_m0", "average")),
+            roi_method_m1=_require_roi_method("measured_values.roi_method_m1", d.get("roi_method_m1", "average")),
+            roi_method_m2=_require_roi_method("measured_values.roi_method_m2", d.get("roi_method_m2", "average")),
+            roi_method_m3=_require_roi_method("measured_values.roi_method_m3", d.get("roi_method_m3", "average")),
         )
 
 

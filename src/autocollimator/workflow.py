@@ -23,7 +23,7 @@ from autocollimator.config.models import (
 
 from autocollimator.target_utils import(
     ROI_NAMES,
-    find_cross_center,
+    find_cross_center_detailed,
     image_md5
 )
 
@@ -228,16 +228,19 @@ def run_center_finding_on_image(
 
     LOGGER.info(
         "Running center-finding workflow with crop_center=%s crop_size=%s roi_size=%s "
-        "subpixel=%s subpixel_neighbors=%s debug=%s",
+        "subpixel=%s subpixel_neighbors=%s profile_mode=%s oversample_step=%s fine_window=%s debug=%s",
         crop_center,
         crop_size,
         roi_size,
         mps.subpixel,
         mps.subpixel_neighbors,
+        mps.profile_mode,
+        mps.oversample_step,
+        mps.fine_window,
         debug,
     )
 
-    position, angles, overlay_image, q_ratio_list = find_cross_center(
+    result = find_cross_center_detailed(
         image=image,
         crop_center=crop_center,
         crop_size=crop_size,
@@ -245,9 +248,14 @@ def run_center_finding_on_image(
         q_limit=qls.rss_ratio,
         subpixel=mps.subpixel,
         subpixel_neighbors=mps.subpixel_neighbors,
+        profile_mode=mps.profile_mode,
+        oversample_step=mps.oversample_step,
+        fine_window=mps.fine_window,
         debug=debug,
         debug_prefix=debug_prefix_str if debug_prefix_str is not None else "",
     )
+    position, angles = result.center, result.angles
+    overlay_image, q_ratio_list = result.overlay, result.q_ratio_list
 
     success = position is not None
     if success:
@@ -286,7 +294,11 @@ def run_center_finding_on_image(
         linewidth_w3 = 0,
         overlay_hash = overlay_hash,
         success = success,
-        message = message   
+        message = message,
+        roi_method_m0 = result.roi_methods[0],
+        roi_method_m1 = result.roi_methods[1],
+        roi_method_m2 = result.roi_methods[2],
+        roi_method_m3 = result.roi_methods[3],
     )
     recommendations = Recommendations(
         updated_brightness=0,
