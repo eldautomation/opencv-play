@@ -133,7 +133,10 @@ class AutocollimatorApp:
         """
         Build a shared filename prefix:
 
-        {device-name}_{device-serial-number}_{YYYY-MM-DD_HH-mm-ss}
+        {device-name}_{device-serial-number}_{YYYY-MM-DD_HH-mm-ss-SSS}
+
+        SSS is milliseconds. save_measurement_output adds a counter suffix if the name is
+        still taken (R13).
         """
         if not self.is_started:
             raise RuntimeError("Application is not started. Call startup() first.")
@@ -143,7 +146,7 @@ class AutocollimatorApp:
 
         device_name = self._sanitize_filename_part(device.name)
         serial_number = self._sanitize_filename_part(device.serial_number)
-        timestamp_str = ts.strftime("%Y-%m-%d_%H-%M-%S")
+        timestamp_str = f"{ts.strftime('%Y-%m-%d_%H-%M-%S')}-{ts.microsecond // 1000:03d}"
 
         return f"{device_name}_{serial_number}_{timestamp_str}"
 

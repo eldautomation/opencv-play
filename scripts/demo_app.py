@@ -8,7 +8,6 @@ from autocollimator.config.store import ConfigError
 from autocollimator.target_utils import pct_list_to_int_list
 from dataclasses import replace
 from dataclasses import dataclass
-from time import sleep
 
 # note: use run with this: PYTHONPATH=src python scripts/demo_app.py
 
@@ -192,9 +191,6 @@ def main() -> int:
             print(f"input_path:{input_path}")
             print(f"overlay_path:{overlay_path}")
             print(f"yaml_path:{yaml_path}")
-
-            print("sleeping to avoid namespace collisions")
-            sleep(1.7)
 
 
             # print(result)

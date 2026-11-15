@@ -585,6 +585,19 @@ def load_measurement_output(path: Path) -> MeasurementOutput:
     return MeasurementOutput.from_dict(raw)
 
 
+# File name suffixes of one measurement bundle (see save_measurement_output).
+MEASUREMENT_FILE_SUFFIXES = ("_input.png", "_overlay.png", "_measurement.yaml")
+
+
+def _unique_prefix(output_dir: Path, prefix: str) -> str:
+    """``prefix``, or ``prefix_1``, ``prefix_2``, ... if any bundle file already exists (R13)."""
+    candidate, n = prefix, 0
+    while any((output_dir / f"{candidate}{suffix}").exists() for suffix in MEASUREMENT_FILE_SUFFIXES):
+        n += 1
+        candidate = f"{prefix}_{n}"
+    return candidate
+
+
 def save_measurement_output(
     output_dir: Path,
     prefix: str,
@@ -599,6 +612,10 @@ def save_measurement_output(
     - {prefix}_input.png
     - {prefix}_overlay.png
     - {prefix}_measurement.yaml
+
+    Existing files are never overwritten: if any of them exists, a counter is appended to
+    the prefix (``{prefix}_1``, ``{prefix}_2``, ...). The prefix used is also stored as
+    ``measurement_name``.
 
     Parameters
     ----------
@@ -619,6 +636,7 @@ def save_measurement_output(
         Paths to (input_image_path, overlay_image_path, measurement_yaml_path)
     """
     _ensure_output_dir(output_dir)
+    prefix = _unique_prefix(output_dir, prefix)
 
     input_path = output_dir / f"{prefix}_input.png"
     overlay_path = output_dir / f"{prefix}_overlay.png"
