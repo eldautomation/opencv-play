@@ -758,21 +758,11 @@ def sdrm_2(
     subpixel_neighbors: int = 2,
 ) -> tuple[int | float | None, float]:
     """
-    Symmetric Difference RMS Minimum (SDRM) center offset estimator for 1D signals.
+    Symmetric Difference RMS Minimum (SDRM) center offset estimator for 1D signals, with
+    a quality check.
 
-    This function preserves the original SDRM algorithm:
-    - Reverse the signal
-    - Pad both original and reversed signals with a baseline value (mean)
-    - For each offset in [-search_size, +search_size], compute RSS between padded arrays
-    - Return the offset (from center) that minimizes RSS
-
-    With ``subpixel=True``, the integer minimum is refined by a least-squares quadratic fit
-    (``numpy.polyfit``, degree 2) to the sum of squared differences (RSS**2) at the minimum
-    index m and ``subpixel_neighbors`` points on each side. The vertex offset is added to the
-    integer offset. With ``subpixel_neighbors=1`` this equals the 3-point parabola
-    ``0.5*(a - c)/(a - 2b + c)``. The integer minimum is used instead when the fit window
-    would extend past the search range or the fitted curvature is not positive, and the
-    vertex offset is clamped to +/-1 px.
+    Runs ``_sdrm_core`` (see there for the algorithm and the sub-pixel refinement) and
+    rejects the result when the quality ratio exceeds ``q_limit``.
 
     Parameters
     ----------
@@ -787,14 +777,14 @@ def sdrm_2(
     debug_prefix:
         File prefix for debug plot outputs.
     subpixel:
-        If True, refine the offset to sub-pixel precision (see above). Default False.
+        If True, refine the offset to sub-pixel precision. Default False.
     subpixel_neighbors:
         Points on each side of the minimum used in the quadratic fit; int in 1..3.
 
     Returns
     -------
     (peak_from_center, r1):
-        ``peak_from_center`` is the offset (negative/positive) from the center pixel that
+        ``peak_from_center`` is the offset (negative/positive) from the center sample that
         minimizes RSS: an int when ``subpixel`` is False, a float when True, and None when
         the quality ratio exceeds ``q_limit``. ``r1`` is min(RSS) / mean(RSS).
 
@@ -802,6 +792,59 @@ def sdrm_2(
     ------
     ValueError
         If ``subpixel_neighbors`` is not an int in 1..3.
+    """
+    if not isinstance(q_limit,(float,np.float32, np.float64)):
+        raise TypeError(f"q_limit must be a float, got {type(q_limit).__name__}")
+    if not 0 < q_limit < 1:
+        raise ValueError(f"q_limit must be between 0 and 1, got {q_limit}")
+
+    peak_from_center, r1 = _sdrm_core(
+        values,
+        search_size,
+        debug=debug,
+        debug_prefix=debug_prefix,
+        subpixel=subpixel,
+        subpixel_neighbors=subpixel_neighbors,
+    )
+    if r1 > q_limit:
+        return None, r1
+    return peak_from_center, r1
+
+
+def _sdrm_core(
+    values,
+    search_size: int,
+    *,
+    debug: bool = False,
+    debug_prefix: str = "./test_out/test-",
+    subpixel: bool = False,
+    subpixel_neighbors: int = 2,
+) -> tuple[int | float, float]:
+    """
+    SDRM center offset estimator for 1D signals, without a quality check.
+
+    This function preserves the original SDRM algorithm:
+    - Reverse the signal
+    - Pad both original and reversed signals with a baseline value (mean)
+    - For each offset in [-search_size, +search_size], compute RSS between padded arrays
+    - Return the offset (from center) that minimizes RSS
+
+    All offsets are in samples of the grid ``values`` is sampled on (pixels for a pixel
+    profile, ``oversample_step`` px for an oversampled one).
+
+    With ``subpixel=True``, the integer minimum is refined by a least-squares quadratic fit
+    (``numpy.polyfit``, degree 2) to the sum of squared differences (RSS**2) at the minimum
+    index m and ``subpixel_neighbors`` samples on each side. The vertex offset is added to
+    the integer offset. With ``subpixel_neighbors=1`` this equals the 3-point parabola
+    ``0.5*(a - c)/(a - 2b + c)``. The integer minimum is used instead when the fit window
+    would extend past the search range or the fitted curvature is not positive, and the
+    vertex offset is clamped to +/-1 sample.
+
+    Returns
+    -------
+    (peak_from_center, r1):
+        ``peak_from_center`` is the offset in samples that minimizes RSS: an int when
+        ``subpixel`` is False, a float when True. ``r1`` is min(RSS) / mean(RSS).
     """
     # ----------------------------
     # Type + shape checks
@@ -826,11 +869,6 @@ def sdrm_2(
         raise TypeError(f"debug must be bool, got {type(debug).__name__}")
     if not isinstance(debug_prefix, str):
         raise TypeError(f"debug_prefix must be str, got {type(debug_prefix).__name__}")
-
-    if not isinstance(q_limit,(float,np.float32, np.float64)):
-        raise TypeError(f"q_limit must be a float, got {type(q_limit).__name__}")
-    if not 0 < q_limit < 1:
-        raise ValueError(f"q_limit must be between 0 and 1, got {q_limit}")
 
     if not isinstance(subpixel, (bool, np.bool_)):
         raise TypeError(f"subpixel must be bool, got {type(subpixel).__name__}")
@@ -991,10 +1029,8 @@ def sdrm_2(
 
 
     # Original function returned peak_from_center only
-    peak_from_center = int(min_k[0])
-    if r1 > q_limit:
-        peak_from_center = None
-    elif subpixel:
+    peak_from_center: int | float = int(min_k[0])
+    if subpixel:
         peak_from_center = _subpixel_offset(ssd_by_i, int(min_i[0]), peak_from_center, subpixel_neighbors)
 
     return peak_from_center, r1
@@ -1003,7 +1039,7 @@ def sdrm_2(
 def _subpixel_offset(ssd: list[float], m: int, k_m: int, neighbors: int) -> float:
     """
     Refine the integer SDRM minimum ``k_m`` (at index ``m`` of ``ssd``) with a least-squares
-    quadratic fit over ``m - neighbors .. m + neighbors``. See ``sdrm_2``.
+    quadratic fit over ``m - neighbors .. m + neighbors`` (in samples). See ``_sdrm_core``.
     """
     if m - neighbors < 0 or m + neighbors > len(ssd) - 1:
         LOGGER.debug(
@@ -1022,7 +1058,7 @@ def _subpixel_offset(ssd: list[float], m: int, k_m: int, neighbors: int) -> floa
     offset = -b / (2.0 * a)
     if abs(offset) > 1.0:
         clamped = math.copysign(1.0, offset)
-        LOGGER.debug("SDRM subpixel: vertex offset %.6g clamped to %+.0f px", offset, clamped)
+        LOGGER.debug("SDRM subpixel: vertex offset %.6g clamped to %+.0f samples", offset, clamped)
         offset = clamped
     return float(k_m + offset)
 

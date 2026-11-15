@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from autocollimator.target_utils import sdrm_2
+from autocollimator.target_utils import _sdrm_core, sdrm_2
 
 Q_LIMIT = 0.5
 
@@ -80,3 +80,35 @@ def test_sdrm_2_minimum_at_search_edge_falls_back_to_integer():
 
     k, _ = sdrm_2(values, search_size, q_limit=Q_LIMIT, debug=False, subpixel=True)
     assert k == k_int
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("subpixel", [False, True])
+@pytest.mark.parametrize("shift", [-0.4, 0.1, 0.3])
+def test_sdrm_core_matches_sdrm_2_when_quality_passes(shift, subpixel):
+    values = _profile(shift)
+    expected = sdrm_2(values, 10, q_limit=Q_LIMIT, debug=False, subpixel=subpixel)
+    assert expected[0] is not None
+    assert _sdrm_core(values, 10, subpixel=subpixel) == expected
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("subpixel", [False, True])
+def test_sdrm_core_has_no_quality_limit(subpixel):
+    values = _profile(0.3)
+    k_ref, r1 = sdrm_2(values, 10, q_limit=0.99, debug=False, subpixel=subpixel)
+    low_limit = r1 / 2
+    assert sdrm_2(values, 10, q_limit=low_limit, debug=False, subpixel=subpixel) == (None, r1)
+    assert _sdrm_core(values, 10, subpixel=subpixel) == (k_ref, r1)
+
+
+@pytest.mark.unit
+def test_sdrm_core_offsets_are_in_samples():
+    # A 10x oversampled profile: a 0.37 px shift is 3.7 samples.
+    oversample = 10
+    x = np.arange(2001, dtype=np.float64) / oversample
+    values = 20.0 + 200.0 * np.exp(-0.5 * ((x - x[1000] - 0.37) / 2.0) ** 2)
+    k_int, _ = _sdrm_core(values, 15)
+    assert k_int == 4
+    k, _ = _sdrm_core(values, 15, subpixel=True, subpixel_neighbors=3)
+    assert abs(k - 3.7) < 0.05
