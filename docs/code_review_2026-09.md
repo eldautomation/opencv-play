@@ -78,3 +78,34 @@ Prefix has 1-second resolution; demo sleeps 1.7 s to avoid overwrites. Add milli
 Remove old `sdrm`, `run_demo`, unreachable `_default_crop_from_image` branch, stray `print`s, and the
 discarded `pairs` computation. Import matplotlib lazily inside debug plotting. Consider Git LFS for
 test images (repo zip is ~307 MB). Add `.gitattributes` for consistent line endings.
+
+### R16 — Quality ratio penalizes thin lines
+With q_limit 0.5, synthetic 1.5 px FWHM lines fail pass 1 at 6/11 sub-pixel positions
+(found in Phase C2). The min/mean RSS ratio depends on line width relative to the search
+range. Needs a width-independent quality measure, or a limit calibrated per reticle,
+before thin production reticles are used. Validate with bench images of the real reticle.
+
+### R17 — Horizontal line profile is asymmetric
+Fine RSS curves: vertical line ~10:1 contrast, symmetric; horizontal line only ~1.1–1.2:1,
+consistently steeper toward +y (blob-13, blob-22). blob-13 right ROI has no minimum at all
+(caught by fallback:edge). SDRM's symmetry center is then window-dependent, so pass 1 and
+pass 2 disagree. Risk: position-dependent bias in y tilt in all modes. Investigate profile
+shape, background gradient and window dependence (Stage 3 diagnosis), then check optics and
+illumination on the bench (astigmatism/coma, uneven illumination).
+Likely contributors: R18 (clipped, flat-topped line profiles) and R19 (ghost band adding an
+asymmetric background). Use the `gray_mode` option, the per-ROI saturation fractions and the
+adaptive deskew `fine_window` (recorded per ROI) for this diagnosis.
+
+### R18 — Saturated line profiles
+The green channel is clipped at 255 on blob-13..22 and all Test images; 4–8 % of all pixels have
+a channel >= 250. Line profiles have flat tops, so the luma profile depends on exposure, the SDRM
+symmetry center is poorly defined across the plateau, and the RSS contrast drops. Saturation is
+now recorded per ROI (`saturation_s0..s3`, warning above 1 %) but does not fail the measurement.
+`gray_mode = "green" | "max"` exposes the clipped channel directly. Next: lower exposure/gain on
+the bench, then decide on a saturation limit that fails the measurement.
+
+### R19 — Bright off-center band in blob images
+Blob images show a bright band offset from the crosshair, likely a ghost reflection (an internal
+reflection in the optics). It is absent in Test8 and Test14. It adds an asymmetric background
+term to the ROI profiles and can bias the SDRM center (see R17). Check baffling, AR coatings and
+element tilt on the bench; compare profiles with and without the band.
