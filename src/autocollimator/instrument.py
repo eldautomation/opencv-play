@@ -33,7 +33,7 @@ import logging
 import math
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, TypeVar
 
 from autocollimator.units import AngleUnit, OutputUnits, wrap_symmetric
 
@@ -41,6 +41,8 @@ if TYPE_CHECKING:
     from autocollimator.config.models import CaptureMode, DetectOptics, Device, ImageSensor, MeasuredValues
 
 LOGGER = logging.getLogger(__name__)
+
+_E = TypeVar("_E", bound=Enum)
 
 QUARTER_TURN_RAD = math.pi / 2.0
 IMAGE_SIZE_MISMATCH_POLICIES = ("error", "warn")
@@ -67,7 +69,7 @@ class RotationZeroMode(Enum):
     MEASURED_ZERO = "measured_zero"
 
 
-def _parse_enum(enum_cls, value, name: str):
+def _parse_enum(enum_cls: type[_E], value, name: str) -> _E:
     if isinstance(value, enum_cls):
         return value
     try:

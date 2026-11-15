@@ -45,6 +45,10 @@ from autocollimator.config.models import (
 
 LOGGER = logging.getLogger(__name__)
 
+# (x, y) in px, and an infinite line through two points (see line_intersection).
+Point = tuple[float, float]
+Line = tuple[Point, Point]
+
 # Order of the ROIs measured by find_cross_center (and of its q_ratio_list).
 ROI_NAMES: tuple[str, str, str, str] = ("top", "bottom", "right", "left")
 
@@ -265,7 +269,7 @@ def line_intersection(line1: Line, line2: Line) -> Point:
     # ----------------------------
     # Input validation
     # ----------------------------
-    def _validate_line(line, name: str):
+    def _validate_line(line, name: str) -> None:
         if not isinstance(line, (tuple, list)) or len(line) != 2:
             raise TypeError(f"{name} must be a tuple/list of two points")
 
@@ -1124,7 +1128,7 @@ def find_center_pixel(
     debug_prefix: str = "dbg",
     subpixel: bool = False,
     subpixel_neighbors: int = 2,
-) -> tuple[float, float]:
+) -> tuple[float | None, float]:
     """
     Estimate the center position of a 1D intensity distribution along the x-axis of a narrow strip image.
 
