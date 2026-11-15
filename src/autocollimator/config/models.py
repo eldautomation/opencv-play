@@ -115,6 +115,14 @@ def _require_max_refine_shift(name: str, v) -> float:
     return float(v)
 
 
+def _opt_fraction(name: str, v) -> Optional[float]:
+    if v is None:
+        return None
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not 0.0 <= v <= 1.0:
+        raise ValueError(f"{name} must be None or a number in 0..1, got {v!r}")
+    return float(v)
+
+
 def _require_roi_method(name: str, v) -> str:
     if v not in ROI_METHODS:
         raise ValueError(f"{name} must be one of {ROI_METHODS}, got {v!r}")
@@ -350,10 +358,18 @@ class MeasuredValues:
     roi_method_m1: str = "average"
     roi_method_m2: str = "average"
     roi_method_m3: str = "average"
+    # Fraction of pixels per ROI with any channel >= 250 (R18); None in records written before
+    # the saturation check existed.
+    saturation_s0: Optional[float] = None
+    saturation_s1: Optional[float] = None
+    saturation_s2: Optional[float] = None
+    saturation_s3: Optional[float] = None
 
     def __post_init__(self) -> None:
         for name in ("roi_method_m0", "roi_method_m1", "roi_method_m2", "roi_method_m3"):
             _require_roi_method(f"measured_values.{name}", getattr(self, name))
+        for name in ("saturation_s0", "saturation_s1", "saturation_s2", "saturation_s3"):
+            _opt_fraction(f"measured_values.{name}", getattr(self, name))
         if self.success:
             missing = [
                 name
@@ -389,6 +405,10 @@ class MeasuredValues:
             roi_method_m1=_require_roi_method("measured_values.roi_method_m1", d.get("roi_method_m1", "average")),
             roi_method_m2=_require_roi_method("measured_values.roi_method_m2", d.get("roi_method_m2", "average")),
             roi_method_m3=_require_roi_method("measured_values.roi_method_m3", d.get("roi_method_m3", "average")),
+            saturation_s0=_opt_fraction("measured_values.saturation_s0", d.get("saturation_s0")),
+            saturation_s1=_opt_fraction("measured_values.saturation_s1", d.get("saturation_s1")),
+            saturation_s2=_opt_fraction("measured_values.saturation_s2", d.get("saturation_s2")),
+            saturation_s3=_opt_fraction("measured_values.saturation_s3", d.get("saturation_s3")),
         )
 
 

@@ -43,6 +43,7 @@ from dataclasses import replace
 
 from autocollimator.app import AutocollimatorApp
 from autocollimator.config.store import ConfigError
+from autocollimator.target_utils import SATURATION_LEVEL, SATURATION_WARN_FRACTION
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
 ROI_NAMES = ("top", "bottom", "right", "left")  # order of rss_ratio_r0..r3
@@ -135,6 +136,8 @@ def evaluate(image_dir: Path, config_dir: Path, run_dir: Path, overrides: dict) 
             q = [mv.rss_ratio_r0, mv.rss_ratio_r1, mv.rss_ratio_r2, mv.rss_ratio_r3]
             row["q"] = dict(zip(ROI_NAMES, q))
             methods = [mv.roi_method_m0, mv.roi_method_m1, mv.roi_method_m2, mv.roi_method_m3]
+            sat = [mv.saturation_s0, mv.saturation_s1, mv.saturation_s2, mv.saturation_s3]
+            row["sat"] = dict(zip(ROI_NAMES, sat))
             row["methods"] = " ".join(f"{name}:{m}" for name, m in zip(ROI_NAMES, methods))
             row["message"] = mv.message
 
@@ -151,7 +154,8 @@ def evaluate(image_dir: Path, config_dir: Path, run_dir: Path, overrides: dict) 
 
 def write_csv(rows: list[dict], path: Path) -> None:
     fields = ["file", "size", "status", "reported_success", "expected", "match", "x", "y",
-              "a0", "a1", "q_top", "q_bottom", "q_right", "q_left", "mode", "methods", "ms", "message", "notes"]
+              "a0", "a1", "q_top", "q_bottom", "q_right", "q_left",
+              "sat_top", "sat_bottom", "sat_right", "sat_left", "mode", "methods", "ms", "message", "notes"]
     with path.open("w", newline="", encoding="utf-8") as f:
         wr = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         wr.writeheader()
@@ -159,6 +163,7 @@ def write_csv(rows: list[dict], path: Path) -> None:
             out = dict(r)
             for name in ROI_NAMES:
                 out[f"q_{name}"] = (r.get("q") or {}).get(name)
+                out[f"sat_{name}"] = (r.get("sat") or {}).get(name)
             wr.writerow(out)
 
 
@@ -174,6 +179,15 @@ def write_html(rows: list[dict], path: Path, title: str, q_limit: float) -> None
             bad = v is not None and v > q_limit
             cells.append(f'<td class="{"bad" if bad else ""}">{fmt(v, 3)}</td>')
         return "".join(cells)
+
+    def sat_cell(r: dict) -> str:
+        sat = {k: v for k, v in (r.get("sat") or {}).items() if v is not None}
+        if not sat:
+            return "<td></td>"
+        worst = max(sat.values())
+        tip = ", ".join(f"{name} {100 * v:.2f} %" for name, v in sat.items())
+        cls = "bad" if worst > SATURATION_WARN_FRACTION else ""
+        return f'<td class="{cls}" title="{html.escape(tip)}">{fmt(100 * worst)}</td>'
 
     body = []
     for r in rows:
@@ -192,7 +206,7 @@ def write_html(rows: list[dict], path: Path, title: str, q_limit: float) -> None
             f'<tr class="{cls}"><td>{thumb}</td><td>{html.escape(r["file"])}</td><td>{size_cell}</td>'
             f"<td><b>{status}</b>{flag}</td><td>{html.escape(str(r.get('expected', '')))}</td>"
             f"<td>{r.get('match', '')}</td><td>{fmt(r.get('x'))}</td><td>{fmt(r.get('y'))}</td>"
-            f"<td>{fmt(r.get('a0'), 3)}</td><td>{fmt(r.get('a1'), 3)}</td>{q_cells(r)}"
+            f"<td>{fmt(r.get('a0'), 3)}</td><td>{fmt(r.get('a1'), 3)}</td>{q_cells(r)}{sat_cell(r)}"
             f"<td>{html.escape(r.get('mode', ''))}</td><td class='methods'>{html.escape(r.get('methods', ''))}</td>"
             f"<td>{r.get('ms', '')}</td><td class='msg'>{html.escape(str(r.get('message', '')))}"
             f"<br><i>{html.escape(str(r.get('notes', '')))}</i></td></tr>"
@@ -215,11 +229,13 @@ def write_html(rows: list[dict], path: Path, title: str, q_limit: float) -> None
 </style></head><body>
 <h1>{html.escape(title)}</h1>
 <p><b>{n_ok}/{len(rows)}</b> centers found &middot; <b>{n_mismatch}</b> mismatches vs manifest
- &middot; <b>{n_lie}</b> failures reported as success (R1) &middot; quality limit q &gt; {q_limit} shaded red.
+ &middot; <b>{n_lie}</b> failures reported as success (R1) &middot; quality limit q &gt; {q_limit} shaded red
+ &middot; sat = max saturated-pixel % over the ROIs (any channel &gt;= {SATURATION_LEVEL}), shaded above
+ {100 * SATURATION_WARN_FRACTION:g} %, hover for per-ROI values.
  Click a thumbnail for the full overlay (blue = crop, yellow = ROIs, green = ROI centers, red = crosshair center).</p>
 <table><tr><th>Overlay</th><th>File</th><th>Size</th><th>Result</th><th>Expected</th><th>Match</th>
 <th>x</th><th>y</th><th>a0</th><th>a1</th><th>q top</th><th>q bottom</th><th>q right</th><th>q left</th>
-<th>Mode</th><th>ROI methods</th><th>ms</th><th>Message / notes</th></tr>
+<th>sat max %</th><th>Mode</th><th>ROI methods</th><th>ms</th><th>Message / notes</th></tr>
 {''.join(body)}
 </table></body></html>"""
     path.write_text(page, encoding="utf-8")

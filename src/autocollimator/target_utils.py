@@ -1263,6 +1263,10 @@ DESKEW_SEARCH_PX = 1.5
 DESKEW_MAX_REFINE_SHIFT_PX = 0.75
 # Deskew pass 2 falls back to the pass-1 result when more bins than this are empty.
 DESKEW_MAX_EMPTY_FRACTION = 0.2
+# A pixel counts as saturated when any channel (uint8 scale) is at least this value (R18).
+SATURATION_LEVEL = 250
+# A warning is logged when more than this fraction of a ROI's pixels is saturated.
+SATURATION_WARN_FRACTION = 0.01
 
 
 @dataclass(frozen=True)
@@ -1280,6 +1284,8 @@ class RoiTrace:
     # rejected (fallback:edge / fallback:shift); None when pass 2 did not compute one.
     pos1: float
     pos2: float | None
+    # Fraction of ROI pixels with any channel >= SATURATION_LEVEL (original image, uint8 scale).
+    saturation: float | None = None
 
 
 @dataclass(frozen=True)
@@ -1296,6 +1302,23 @@ class CrossCenterResult:
     roi_methods: tuple[str, ...]
     # Intermediate values per ROI, in ROI_NAMES order.
     rois: tuple[RoiTrace, ...] = ()
+    # Saturated-pixel fraction per ROI, in ROI_NAMES order (see roi_saturation_fraction).
+    saturation: tuple[float, ...] = ()
+
+
+def roi_saturation_fraction(roi_u8: np.ndarray, level: int = SATURATION_LEVEL) -> float:
+    """
+    Fraction of pixels in a uint8 ROI where any channel is >= ``level``.
+
+    ``roi_u8`` is (H,W) or (H,W,C); a 2D ROI counts its single channel.
+    """
+    roi_u8 = np.asarray(roi_u8)
+    if roi_u8.ndim not in (2, 3) or roi_u8.size == 0:
+        raise ValueError(f"roi_u8 must be a non-empty 2D or 3D array, got shape {roi_u8.shape}")
+    hot = roi_u8 >= level
+    if hot.ndim == 3:
+        hot = hot.any(axis=2)
+    return float(np.count_nonzero(hot) / hot.size)
 
 
 def _validate_profile_options(
@@ -1746,6 +1769,19 @@ def find_cross_center_detailed(
         roi_data[name] = (x0, y0, x1, y1, roi, pos_x)
         centers_measured[name] = _roi_point(name, x0, y0, roi, pos_x)
 
+    # Saturation from the original image, not the reduced gray (a clipped channel may be
+    # hidden by the luma weights). Reported only; never fails the measurement (R18).
+    color_u8 = ensure_bgr_u8(image)
+    saturation: dict[str, float] = {}
+    for name in ROI_NAMES:
+        x0, y0, x1, y1 = roi_data[name][:4]
+        saturation[name] = roi_saturation_fraction(color_u8[y0:y1, x0:x1])
+        if saturation[name] > SATURATION_WARN_FRACTION:
+            LOGGER.warning(
+                "ROI %s: %.2f %% of pixels saturated (any channel >= %d; warning above %.0f %%)",
+                name, 100.0 * saturation[name], SATURATION_LEVEL, 100.0 * SATURATION_WARN_FRACTION,
+            )
+
     roi_methods = {name: "average" for name in ROI_NAMES}
     roi_slopes: dict[str, float | None] = {name: None for name in ROI_NAMES}
     roi_pos2: dict[str, float | None] = {name: None for name in ROI_NAMES}
@@ -1799,9 +1835,11 @@ def find_cross_center_detailed(
             slope=roi_slopes[name],
             pos1=roi_data[name][5],
             pos2=roi_pos2[name],
+            saturation=saturation[name],
         )
         for name in ROI_NAMES
     )
+    saturation_tuple = tuple(saturation[name] for name in ROI_NAMES)
 
     for name in ROI_NAMES:
         x0, y0, x1, y1, _roi, _pos = roi_data[name]
@@ -1818,7 +1856,9 @@ def find_cross_center_detailed(
 
     if measure_fail: 
         LOGGER.warning(f"Quality too low for reliable center finding: - No center computed")
-        return CrossCenterResult(None, None, overlay, q_ratio_list, roi_methods_tuple, roi_traces)
+        return CrossCenterResult(
+            None, None, overlay, q_ratio_list, roi_methods_tuple, roi_traces, saturation_tuple
+        )
 
     # Combine centers
     top = centers_measured["top"]
@@ -1861,7 +1901,9 @@ def find_cross_center_detailed(
 
     _ = slant  # placeholder for future behavior
 
-    return CrossCenterResult(center, (angle_v, angle_h), overlay, q_ratio_list, roi_methods_tuple, roi_traces)
+    return CrossCenterResult(
+        center, (angle_v, angle_h), overlay, q_ratio_list, roi_methods_tuple, roi_traces, saturation_tuple
+    )
 
 
 # ----------------------------

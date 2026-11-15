@@ -306,6 +306,10 @@ def run_center_finding_on_image(
         roi_method_m1 = result.roi_methods[1],
         roi_method_m2 = result.roi_methods[2],
         roi_method_m3 = result.roi_methods[3],
+        saturation_s0 = result.saturation[0],
+        saturation_s1 = result.saturation[1],
+        saturation_s2 = result.saturation[2],
+        saturation_s3 = result.saturation[3],
     )
     recommendations = Recommendations(
         updated_brightness=0,

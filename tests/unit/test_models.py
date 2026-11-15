@@ -128,3 +128,30 @@ def test_measured_values_legacy_plain_fallback_still_loads():
 def test_measured_values_unknown_fallback_reason_raises(value):
     with pytest.raises(ValueError, match="roi_method_m1 must be one of"):
         MeasuredValues(**_values(roi_method_m1=value))
+
+
+SATURATION_FIELDS = ("saturation_s0", "saturation_s1", "saturation_s2", "saturation_s3")
+
+
+@pytest.mark.unit
+def test_measured_values_from_dict_without_saturation_loads_as_none():
+    mv = MeasuredValues.from_dict(_values())
+    assert all(getattr(mv, name) is None for name in SATURATION_FIELDS)
+
+
+@pytest.mark.unit
+def test_measured_values_saturation_round_trip():
+    sat = dict(zip(SATURATION_FIELDS, (0.0, 0.0153, 1.0, 1)))
+    mv = MeasuredValues.from_dict(_values(**sat))
+    assert MeasuredValues.from_dict(dataclasses.asdict(mv)) == mv
+    assert (mv.saturation_s0, mv.saturation_s1, mv.saturation_s2, mv.saturation_s3) == (0.0, 0.0153, 1.0, 1.0)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("field", SATURATION_FIELDS)
+@pytest.mark.parametrize("value", [1.5, -0.1, True, "0.1"])
+def test_measured_values_invalid_saturation_raises(field, value):
+    with pytest.raises(ValueError, match=f"{field} must be None or a number in 0..1"):
+        MeasuredValues.from_dict(_values(**{field: value}))
+    with pytest.raises(ValueError, match=f"{field} must be None or a number in 0..1"):
+        MeasuredValues(**_values(**{field: value}))
