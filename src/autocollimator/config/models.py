@@ -1,7 +1,14 @@
 from __future__ import annotations
 
+import logging
+import warnings
 from dataclasses import dataclass, field
 from typing import Optional
+
+from autocollimator.instrument import IMAGE_SIZE_MISMATCH_POLICIES, ReticleType
+from autocollimator.units import AngleUnit
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _require_int(name: str, v) -> int:
@@ -33,6 +40,25 @@ def _require_str(name: str, v) -> str:
         raise TypeError(f"{name} must be str, got {type(v).__name__}")
     if not v.strip():
         raise ValueError(f"{name} cannot be empty")
+    return v
+
+
+def _opt_str(name: str, v) -> Optional[str]:
+    if v is None:
+        return None
+    return _require_str(name, v)
+
+
+def _require_reticle_type(name: str, v) -> str:
+    valid = tuple(r.value for r in ReticleType)
+    if v not in valid:
+        raise ValueError(f"{name} must be one of {valid}, got {v!r}")
+    return v
+
+
+def _require_mismatch_policy(name: str, v) -> str:
+    if v not in IMAGE_SIZE_MISMATCH_POLICIES:
+        raise ValueError(f"{name} must be one of {IMAGE_SIZE_MISMATCH_POLICIES}, got {v!r}")
     return v
 
 
@@ -213,20 +239,94 @@ class SourceOptics:
         )
 
 
+# Deprecated detect_optics keys and their replacements.
+_DETECT_OPTICS_RENAMED = {"efl1": "collimator_efl_mm", "efl2": "microscope_efl_mm"}
+
+
 @dataclass(frozen=True)
 class DetectOptics:
     id: str
     name: str
-    efl1: float
-    efl2: float
+    # Collimator objective focal length; sets the tilt scale (tilt = 1/2 * atan(d / f)).
+    collimator_efl_mm: float
+    # Microscope objective focal length; stored, not used by the conversion yet.
+    microscope_efl_mm: float
+
+    def __post_init__(self) -> None:
+        for name in ("collimator_efl_mm", "microscope_efl_mm"):
+            if not getattr(self, name) > 0:
+                raise ValueError(f"detect_optics.{name} must be > 0, got {getattr(self, name)!r}")
 
     @staticmethod
     def from_dict(d: dict) -> "DetectOptics":
+        d = dict(d)
+        for old, new in _DETECT_OPTICS_RENAMED.items():
+            if old in d:
+                if new in d:
+                    raise ValueError(f"detect_optics {d.get('id')!r}: both {old!r} and {new!r} are set; remove {old!r}")
+                msg = f"detect_optics {d.get('id')!r}: key {old!r} is deprecated, use {new!r}"
+                warnings.warn(msg, DeprecationWarning, stacklevel=2)
+                LOGGER.warning(msg)
+                d[new] = d.pop(old)
         return DetectOptics(
             id=_require_str("detect_optics.id", d["id"]),
             name=_require_str("detect_optics.name", d["name"]),
-            efl1=_require_float("detect_optics.efl1", d["efl1"]),
-            efl2=_require_float("detect_optics.efl2", d["efl2"]),
+            collimator_efl_mm=_require_float("detect_optics.collimator_efl_mm", d["collimator_efl_mm"]),
+            microscope_efl_mm=_require_float("detect_optics.microscope_efl_mm", d["microscope_efl_mm"]),
+        )
+
+
+@dataclass(frozen=True)
+class CaptureMode:
+    """
+    Camera output mode: output image size and the scaler crop on the sensor (sensor pixels).
+
+    The effective pixel pitch of the output image is the sensor pitch scaled by
+    crop size / output size. The "hd_1080" entry's crop (0, 134, 1456, 819) is an ASSUMPTION
+    (centered 16:9 crop of the IMX296), not yet verified with libcamera ScalerCrop metadata.
+    """
+
+    id: str
+    name: str
+    output_width: int
+    output_height: int
+    crop_x: int
+    crop_y: int
+    crop_width: int
+    crop_height: int
+
+    def __post_init__(self) -> None:
+        for name in ("output_width", "output_height", "crop_width", "crop_height"):
+            if getattr(self, name) <= 0:
+                raise ValueError(f"capture_mode.{name} must be > 0, got {getattr(self, name)!r}")
+        for name in ("crop_x", "crop_y"):
+            if getattr(self, name) < 0:
+                raise ValueError(f"capture_mode.{name} must be >= 0, got {getattr(self, name)!r}")
+
+    def fits_sensor(self, sensor: "ImageSensor") -> bool:
+        return (
+            self.crop_x + self.crop_width <= sensor.pixels_x
+            and self.crop_y + self.crop_height <= sensor.pixels_y
+        )
+
+    def effective_pixel_pitch_um(self, sensor: "ImageSensor") -> tuple[float, float]:
+        """(x, y) pitch of one output-image pixel in um, from the sensor pitch and the crop."""
+        return (
+            sensor.pixel_size_x * self.crop_width / self.output_width,
+            sensor.pixel_size_y * self.crop_height / self.output_height,
+        )
+
+    @staticmethod
+    def from_dict(d: dict) -> "CaptureMode":
+        return CaptureMode(
+            id=_require_str("capture_mode.id", d["id"]),
+            name=_require_str("capture_mode.name", d["name"]),
+            output_width=_require_int("capture_mode.output_width", d["output_width"]),
+            output_height=_require_int("capture_mode.output_height", d["output_height"]),
+            crop_x=_require_int("capture_mode.crop_x", d["crop_x"]),
+            crop_y=_require_int("capture_mode.crop_y", d["crop_y"]),
+            crop_width=_require_int("capture_mode.crop_width", d["crop_width"]),
+            crop_height=_require_int("capture_mode.crop_height", d["crop_height"]),
         )
 
 
@@ -243,6 +343,21 @@ class Device:
     detect_optics_id: str
     measurement_parameters_id: str
     quality_limits_id:str
+    # Optional here so measurement records written before capture modes existed still load;
+    # load_main requires it for the configured device.
+    capture_mode_id: Optional[str] = None
+    reticle_type: str = ReticleType.CROSSHAIR.value
+    # What to do when an image's size differs from the capture mode's output size.
+    image_size_mismatch: str = "error"
+    # Default output units (AngleUnit values); overridable per call.
+    tilt_unit: str = AngleUnit.DEG.value
+    rotation_unit: str = AngleUnit.DEG.value
+
+    def __post_init__(self) -> None:
+        _require_reticle_type("device.reticle_type", self.reticle_type)
+        _require_mismatch_policy("device.image_size_mismatch", self.image_size_mismatch)
+        AngleUnit.parse(self.tilt_unit, "device.tilt_unit")
+        AngleUnit.parse(self.rotation_unit, "device.rotation_unit")
 
     @staticmethod
     def from_dict(d: dict) -> "Device":
@@ -259,6 +374,11 @@ class Device:
             detect_optics_id=_require_str("device.detect_optics_id", d["detect_optics_id"]),
             measurement_parameters_id=_require_str("device.measurement_parameters_id", d["measurement_parameters_id"]),
             quality_limits_id=_require_str("device.quality_limits_id",d["quality_limits_id"]),
+            capture_mode_id=_opt_str("device.capture_mode_id", d.get("capture_mode_id")),
+            reticle_type=_require_str("device.reticle_type", d.get("reticle_type", ReticleType.CROSSHAIR.value)),
+            image_size_mismatch=_require_str("device.image_size_mismatch", d.get("image_size_mismatch", "error")),
+            tilt_unit=_require_str("device.tilt_unit", d.get("tilt_unit", AngleUnit.DEG.value)),
+            rotation_unit=_require_str("device.rotation_unit", d.get("rotation_unit", AngleUnit.DEG.value)),
         )
 
 

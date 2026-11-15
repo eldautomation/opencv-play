@@ -1,11 +1,13 @@
+# Product configurations. The microscope EFLs are placeholders until the optics are specified.
+
 [[detect_optics]]
 id = "301"
-name = "Detect-Optic-A"
-efl1 = 50.0
-efl2 = 100.0
+name = "Product 200 mm"
+collimator_efl_mm = 200.0
+microscope_efl_mm = 45.0
 
 [[detect_optics]]
 id = "302"
-name = "Detect-Optic-B"
-efl1 = 35.0
-efl2 = 70.0
+name = "Product 400 mm"
+collimator_efl_mm = 400.0
+microscope_efl_mm = 90.0

@@ -13,6 +13,15 @@ io_hardware_id = "401"
 
 quality_limits_id="801"
 measurement_parameters_id = "901"
+# Capture mode of the images this device produces (library/capture_mode.toml).
+capture_mode_id = "hd_1080"
+
+reticle_type = "crosshair"
+# "error" | "warn": what to do when an image size differs from the capture mode output size.
+image_size_mismatch = "error"
+# rad | deg | mrad | urad | arcmin | arcsec
+tilt_unit = "deg"
+rotation_unit = "deg"
 
 
 

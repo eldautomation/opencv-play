@@ -1,0 +1,24 @@
+# Camera output modes. Crop = scaler crop on the sensor in sensor pixels (x, y, width, height).
+# Effective pixel pitch = sensor pitch * crop size / output size.
+
+[[capture_mode]]
+id = "native"
+name = "IMX296 native 1456x1088"
+output_width = 1456
+output_height = 1088
+crop_x = 0
+crop_y = 0
+crop_width = 1456
+crop_height = 1088
+
+# ASSUMPTION: centered 16:9 crop of the IMX296, scaled to 1920x1080 (-> 2.61625 um pitch).
+# Not yet verified with libcamera ScalerCrop metadata.
+[[capture_mode]]
+id = "hd_1080"
+name = "1920x1080 from centered 16:9 crop"
+output_width = 1920
+output_height = 1080
+crop_x = 0
+crop_y = 134
+crop_width = 1456
+crop_height = 819

@@ -18,6 +18,7 @@ import cv2
 from dataclasses import replace
 
 from .models import (
+    CaptureMode,
     Device,
     DetectOptics,
     ImageSensor,
@@ -131,6 +132,7 @@ def load_library(config_dir: Path) -> dict[str, Any]:
     det_raw = _load_toml(lib / "detect_optics.toml").get("detect_optics", [])
     mp_raw = _load_toml(lib / "measurement_parameters.toml").get("measurement_parameters", [])
     ql_raw = _load_toml(lib / "quality_limits.toml").get("quality_limits", [])
+    cm_raw = _load_toml(lib / "capture_mode.toml").get("capture_mode", [])
 
     sensors = [ImageSensor.from_dict(d) for d in sensors_raw]
     io_hw = [IOHardware.from_dict(d) for d in io_raw]
@@ -138,6 +140,7 @@ def load_library(config_dir: Path) -> dict[str, Any]:
     detect_optics = [DetectOptics.from_dict(d) for d in det_raw]
     measurement_parameters = [MeasurementParameters.from_dict(d) for d in mp_raw]
     quality_limits = [QualityLimits.from_dict(d) for d in ql_raw]
+    capture_modes = [CaptureMode.from_dict(d) for d in cm_raw]
 
     return {
         "sensors": sensors,
@@ -146,12 +149,14 @@ def load_library(config_dir: Path) -> dict[str, Any]:
         "detect_optics": detect_optics,
         "measurement_parameters": measurement_parameters,
         "quality_limits": quality_limits,
+        "capture_modes": capture_modes,
         "sensors_by_id": _index_by_id(sensors, "id"),
         "io_by_id": _index_by_id(io_hw, "id"),
         "source_by_id": _index_by_id(source_optics, "id"),
         "detect_by_id": _index_by_id(detect_optics, "id"),
         "measurement_parameters_by_id": _index_by_id(measurement_parameters, "id"),
         "quality_limits_by_id": _index_by_id(quality_limits, "id"),
+        "capture_modes_by_id": _index_by_id(capture_modes, "id"),
     }
 
 
@@ -162,6 +167,8 @@ def load_main(config_dir: Path) -> Device:
 
     d = dict(raw["device"])
     d["encryption_key"] = _resolve_encryption_key(d.get("encryption_key", ""), config_dir / "main.toml")
+    if "capture_mode_id" not in d:
+        raise ConfigError(f"device.capture_mode_id is missing in {config_dir / 'main.toml'}")
     return Device.from_dict(d)
 
 
@@ -191,6 +198,18 @@ def validate_device_references(device: Device, lib: dict[str, Any]) -> None:
         raise ConfigError(
             f"device.quality_limits_id={device.quality_limits_id} "
             "not found in library/quality_limits.toml"
+        )
+    if device.capture_mode_id not in lib["capture_modes_by_id"]:
+        raise ConfigError(
+            f"device.capture_mode_id={device.capture_mode_id} not found in library/capture_mode.toml"
+        )
+    capture_mode = lib["capture_modes_by_id"][device.capture_mode_id]
+    sensor = lib["sensors_by_id"][device.image_sensor_id]
+    if not capture_mode.fits_sensor(sensor):
+        raise ConfigError(
+            f"capture_mode {capture_mode.id}: crop ({capture_mode.crop_x}, {capture_mode.crop_y}, "
+            f"{capture_mode.crop_width}, {capture_mode.crop_height}) does not fit sensor "
+            f"{sensor.id} ({sensor.pixels_x}x{sensor.pixels_y})"
         )
 
 
@@ -456,6 +475,38 @@ def delete_quality_limits(config_dir: Path, ql_id: str) -> None:
         "quality_limits",
         "id",
         ql_id,
+    )
+
+
+def add_capture_mode(config_dir: Path, mode: CaptureMode) -> None:
+    _add_entry(
+        config_dir / "library" / "capture_mode.toml",
+        "capture_mode",
+        asdict(mode),
+        "id",
+    )
+
+
+def update_capture_mode(config_dir: Path, mode: CaptureMode) -> None:
+    _update_entry(
+        config_dir / "library" / "capture_mode.toml",
+        "capture_mode",
+        asdict(mode),
+        "id",
+    )
+
+
+def delete_capture_mode(config_dir: Path, capture_mode_id: str) -> None:
+    _ensure_not_referenced_by_main(
+        config_dir,
+        field_name="capture_mode_id",
+        entry_id=capture_mode_id,
+    )
+    _delete_entry(
+        config_dir / "library" / "capture_mode.toml",
+        "capture_mode",
+        "id",
+        capture_mode_id,
     )
 
 

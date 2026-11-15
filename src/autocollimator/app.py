@@ -11,6 +11,7 @@ import re
 from dataclasses import replace
 
 from autocollimator.config.models import (
+    CaptureMode,
     Device,
     MeasurementOutput,
     MeasurementParameters,
@@ -29,6 +30,9 @@ from autocollimator.config.store import (
     validate_device_references,
     save_measurement_output as store_save_measurement_output,
 )
+
+from autocollimator.instrument import InstrumentModel
+from autocollimator.units import AngleUnit, OutputUnits
 
 from autocollimator.workflow import (
     run_center_finding_on_image as workflow_run_center_finding_on_image,
@@ -338,6 +342,51 @@ class AutocollimatorApp:
         lib = self.get_library()
 
         return lib["io_by_id"][device.io_hardware_id]
+
+
+    def get_capture_mode(self) -> CaptureMode:
+        """
+        Return the active capture mode referenced by the current device.
+        """
+        if not self.is_started:
+            raise RuntimeError("Application is not started. Call startup() first.")
+
+        device = self.get_current_config()
+        lib = self.get_library()
+
+        return lib["capture_modes_by_id"][device.capture_mode_id]
+
+
+    def get_instrument_model(self) -> InstrumentModel:
+        """
+        Return the instrument model (optics, effective pixel pitch, zero references) for the active device.
+        """
+        if not self.is_started:
+            raise RuntimeError("Application is not started. Call startup() first.")
+
+        return InstrumentModel.from_config(
+            device=self.get_current_config(),
+            detect_optics=self.get_detect_optics(),
+            image_sensor=self.get_image_sensor(),
+            capture_mode=self.get_capture_mode(),
+        )
+
+
+    def get_output_units(
+        self,
+        tilt_unit: AngleUnit | str | None = None,
+        rotation_unit: AngleUnit | str | None = None,
+    ) -> OutputUnits:
+        """
+        Return the output units: the device defaults, each overridable independently.
+        """
+        device = self.get_current_config()
+        return OutputUnits(
+            tilt_unit=AngleUnit.parse(device.tilt_unit if tilt_unit is None else tilt_unit, "tilt_unit"),
+            rotation_unit=AngleUnit.parse(
+                device.rotation_unit if rotation_unit is None else rotation_unit, "rotation_unit"
+            ),
+        )
 
 
     def get_measurement_hardware(self) -> MeasurementHardware:

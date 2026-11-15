@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Optional
 from autocollimator.units import AngleUnit, OutputUnits, wrap_symmetric
 
 if TYPE_CHECKING:
-    from autocollimator.config.models import MeasuredValues
+    from autocollimator.config.models import CaptureMode, DetectOptics, Device, ImageSensor, MeasuredValues
 
 LOGGER = logging.getLogger(__name__)
 
@@ -159,6 +159,27 @@ class InstrumentModel:
             raise ValueError(
                 f"image_size_mismatch must be one of {IMAGE_SIZE_MISMATCH_POLICIES}, got {self.image_size_mismatch!r}"
             )
+
+    @staticmethod
+    def from_config(
+        device: "Device",
+        detect_optics: "DetectOptics",
+        image_sensor: "ImageSensor",
+        capture_mode: "CaptureMode",
+    ) -> "InstrumentModel":
+        """Build the model from the resolved device configuration."""
+        pitch_x, pitch_y = capture_mode.effective_pixel_pitch_um(image_sensor)
+        return InstrumentModel(
+            reticle_type=device.reticle_type,
+            collimator_efl_mm=detect_optics.collimator_efl_mm,
+            microscope_efl_mm=detect_optics.microscope_efl_mm,
+            capture_mode_id=capture_mode.id,
+            pixel_pitch_x_um=pitch_x,
+            pixel_pitch_y_um=pitch_y,
+            expected_image_width=capture_mode.output_width,
+            expected_image_height=capture_mode.output_height,
+            image_size_mismatch=device.image_size_mismatch,
+        )
 
     @staticmethod
     def from_dict(d: dict) -> "InstrumentModel":
