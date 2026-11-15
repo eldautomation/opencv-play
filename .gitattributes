@@ -1,2 +1,16 @@
+# All text files use LF, in the repository and in the working tree.
+* text=auto eol=lf
+
+# Binary files: never converted or diffed as text.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.bmp binary
+*.tif binary
+*.tiff binary
+*.pdf binary
+*.zip binary
+
+# Git LFS for the test images (after the binary rules, so these attributes win).
 tests/assets/images/*.png filter=lfs diff=lfs merge=lfs -text
 tests/assets/images/*.jpg filter=lfs diff=lfs merge=lfs -text
