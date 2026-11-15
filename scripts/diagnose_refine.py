@@ -14,10 +14,12 @@ Also reported per ROI, from the deskewed profile over +/-40 px around pass 1:
 - <stem>_profile_<roi>.png: the profile with pass-1 / pass-2 / chosen centers and its mirror
   image about the chosen center (asymmetry shows as a gap between the two curves).
 - The pass-2 center for fine_window = 10, 20, 40, 80 px (drift => asymmetric profile).
-- Background on each side (mean of the outer 10 px), line FWHM and half-widths, and the
-  RSS contrast min/mean (r1) on the configured profile.
-- Next to that FWHM: the pass-1 line-width estimate (``_estimate_line_fwhm``) and the
-  half-width the adaptive fine_window mode would use (``_adaptive_fine_window``).
+- Background on each side (mean of the outer 10 px), half-widths at half maximum over that
+  background, and the RSS contrast min/mean (r1) on the configured profile.
+- Line FWHM and the half-width the adaptive fine_window mode uses, both from
+  ``_adaptive_fine_window`` on the pass-1 profile, i.e. the same local-background estimate
+  (``_estimate_line_fwhm``) as find_cross_center. The deskewed +/-40 px profile is too short
+  for it: for wide lines its background bands lie up to ~100 px from the line.
 """
 
 from __future__ import annotations
@@ -64,7 +66,7 @@ def half_crossing(u: np.ndarray, s: np.ndarray, i_peak: int, half: float, direct
 
 
 def profile_stats(u: np.ndarray, profile: np.ndarray, center: float) -> dict:
-    """Background per side, polarity, FWHM and half-widths of a profile around ``center``."""
+    """Background per side, polarity and half-widths of a profile around ``center``."""
     rel = u - center
     lo, hi = BACKGROUND_BAND_PX
     bg_minus = float(np.mean(profile[(rel >= -hi) & (rel <= -lo)]))
@@ -83,7 +85,6 @@ def profile_stats(u: np.ndarray, profile: np.ndarray, center: float) -> dict:
         "polarity": "bright" if sign > 0 else "dark",
         "amplitude": float(s[i_peak]),
         "peak_at": float(u[i_peak]),
-        "fwhm": None if left is None or right is None else right - left,
         "hw_minus": None if left is None else center - left,
         "hw_plus": None if right is None else right - center,
     }
@@ -272,14 +273,14 @@ def report_profiles(args, mp, deskew, step: float) -> None:
             centers.append((None if pos is None else origin + pos, m))
         drift_rows.append((trace.name, axis, p1, centers, plot_path))
 
-        # 3. Background, FWHM, RSS contrast.
+        # 3. Background, half-widths, RSS contrast; FWHM and window as find_cross_center computes them.
         cfg_profile, _m = _deskew_profile(
             trace.roi, trace.pos1, trace.slope, oversample_step=step, fine_window=mp.fine_window, name=trace.name
         )
         r1 = None if cfg_profile is None else _sdrm_core(cfg_profile, int(round(mp.refine_search / step)))[1]
-        est_window, est_fwhm = _adaptive_fine_window(trace.roi.mean(axis=0), trace.pos1, mp.fine_window)
+        adapt_window, fwhm = _adaptive_fine_window(trace.roi.mean(axis=0), trace.pos1, mp.fine_window)
         st = profile_stats(u, profile, chosen)
-        st.update(est_fwhm=est_fwhm, est_window=est_window)
+        st.update(fwhm=fwhm, adapt_window=adapt_window)
         stats_rows.append((trace.name, axis, method, st, r1, chosen))
 
     print()
@@ -296,9 +297,10 @@ def report_profiles(args, mp, deskew, step: float) -> None:
 
     print()
     print(f"  Profile shape (+/-{PROFILE_WINDOW_PX} px; background = mean of {BACKGROUND_BAND_PX[0]:g}-"
-          f"{BACKGROUND_BAND_PX[1]:g} px from the chosen center; '-side' = lower x or y coordinate):")
+          f"{BACKGROUND_BAND_PX[1]:g} px from the chosen center; '-side' = lower x or y coordinate;")
+    print("  FWHM / adapt = pass-1 line-width estimate and adaptive half-width, as in find_cross_center):")
     print(f"  {'ROI':<7}{'axis':<5}{'center':>10}{'bg -side':>10}{'bg +side':>10}{'+ minus -':>11}"
-          f"{'line':>8}{'amp':>8}{'FWHM':>8}{'est':>8}{'adapt':>8}{'hw -':>7}{'hw +':>7}{'peak-ctr':>10}"
+          f"{'line':>8}{'amp':>8}{'FWHM':>8}{'adapt':>8}{'hw -':>7}{'hw +':>7}{'peak-ctr':>10}"
           f"{'RSS r1':>9}")
     for name, axis, method, st, r1, chosen in stats_rows:
         if st is None:
@@ -306,7 +308,7 @@ def report_profiles(args, mp, deskew, step: float) -> None:
             continue
         print(f"  {name:<7}{axis:<5}{chosen:>10.3f}{st['bg_minus']:>10.2f}{st['bg_plus']:>10.2f}"
               f"{st['bg_plus'] - st['bg_minus']:>+11.2f}{st['polarity']:>8}{st['amplitude']:>8.1f}"
-              f"{fmt(st['fwhm'], 2):>8}{fmt(st['est_fwhm'], 2):>8}{st['est_window']:>8.2f}"
+              f"{fmt(st['fwhm'], 2):>8}{st['adapt_window']:>8.2f}"
               f"{fmt(st['hw_minus'], 2):>7}{fmt(st['hw_plus'], 2):>7}"
               f"{st['peak_at'] - chosen:>+10.2f}{fmt(r1, 3):>9}")
 
