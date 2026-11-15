@@ -86,15 +86,16 @@ def test_blob_13_deskew_subpixel_matches_average_subpixel(fine_window_mode, defa
     dy = deskew.center[1] - average.center[1]
     assert abs(dx) <= 0.1 and abs(dy) <= 0.1, f"deskew - average = ({dx:+.3f}, {dy:+.3f}) px"
     right = deskew.rois[2]
-    if fine_window_mode == "fixed":
-        assert deskew.roi_methods[2] == "fallback:edge"
-        assert deskew.fine_windows[2] == 40
+    # Both modes fall back for the right ROI. Its line FWHM is ~17.6 px (diagnose_refine.py:
+    # 17.3), so the adaptive window is max(40, 1.5 x 17.6) = 40, the same as fixed. (395a071
+    # passed here in adaptive mode only because the estimator measured the ~61 px pedestal
+    # under the line; the ROI needs a window >= 50 px to have a real pass-2 minimum.)
+    assert deskew.roi_methods[2] == "fallback:edge"
+    assert deskew.fine_windows[2] == 40
+    if fine_window_mode == "adaptive":
+        assert right.line_width == pytest.approx(17.6, abs=1.0)
     else:
-        # With the adaptive window (R17: 1.5 x the 61 px FWHM, ~92 px) the right ROI has a real
-        # pass-2 minimum near pass 1, so it no longer needs the edge fallback.
-        assert deskew.roi_methods[2] == "deskew"
-        assert deskew.fine_windows[2] > 40
-        assert abs(right.pos2 - right.pos1) <= 0.1
+        assert right.line_width is None
     # The edge guard itself, on the 40 px window that triggers it.
     method, pos2 = _deskew_position(
         right.roi, right.pos1, right.slope, oversample_step=0.1, fine_window=40,

@@ -94,7 +94,10 @@ shape, background gradient and window dependence (Stage 3 diagnosis), then check
 illumination on the bench (astigmatism/coma, uneven illumination).
 Likely contributors: R18 (clipped, flat-topped line profiles) and R19 (ghost band adding an
 asymmetric background). Use the `gray_mode` option, the per-ROI saturation fractions and the
-adaptive deskew `fine_window` (recorded per ROI) for this diagnosis.
+deskew `fine_window` (recorded per ROI; `fine_window_mode = "adaptive"` grows it to 1.5 x line
+FWHM, opt-in) for this diagnosis. The blob-13 right ROI's line is only ~17.6 px FWHM, so the
+adaptive window stays at 40 and it still falls back; it needs a window >= 50 px, i.e. the
+asymmetry comes from the background beyond the line, not from a window too narrow for the line.
 
 ### R18 — Saturated line profiles
 The green channel is clipped at 255 on blob-13..22 and all Test images; 4–8 % of all pixels have

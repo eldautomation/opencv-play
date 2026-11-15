@@ -1272,6 +1272,14 @@ SATURATION_WARN_FRACTION = 0.01
 DESKEW_WINDOW_PER_FWHM = 1.5
 # Line-width estimate: the peak is searched within this many px of the pass-1 position.
 LINE_PEAK_SEARCH_PX = 5
+# Line-width estimate: background = mean of a band this wide on each side of the line,
+# starting LINE_BACKGROUND_INNER_PX from the pass-1 position (as in diagnose_refine.py), and
+# moved out to LINE_BACKGROUND_PER_FWHM x FWHM for wide lines (at most
+# LINE_BACKGROUND_ITERATIONS times).
+LINE_BACKGROUND_INNER_PX = 30.0
+LINE_BACKGROUND_BAND_PX = 10.0
+LINE_BACKGROUND_PER_FWHM = 1.5
+LINE_BACKGROUND_ITERATIONS = 3
 
 
 @dataclass(frozen=True)
@@ -1381,21 +1389,8 @@ def _half_crossing(s: np.ndarray, i_peak: int, half: float, direction: int) -> f
     return None
 
 
-def _estimate_line_fwhm(profile: np.ndarray, pos1: float) -> float | None:
-    """
-    FWHM in px of the line in a pass-1 profile (ROI averaged along the line), or None.
-
-    Background is the profile median (the line covers a small part of the ROI). Polarity
-    and peak are taken within +/-``LINE_PEAK_SEARCH_PX`` of ``pos1``; the half-maximum
-    crossings on both sides are linearly interpolated. Returns None when the profile has
-    no peak there or a crossing is missing (line runs off the ROI).
-    """
-    p = np.asarray(profile, dtype=np.float64)
-    c = int(round(pos1))
-    lo, hi = max(0, c - LINE_PEAK_SEARCH_PX), min(p.size, c + LINE_PEAK_SEARCH_PX + 1)
-    if hi <= lo:
-        return None
-    bg = float(np.median(p))
+def _fwhm_over_background(p: np.ndarray, lo: int, hi: int, bg: float) -> float | None:
+    """FWHM of ``p - bg`` around its extremum in ``p[lo:hi]`` (either polarity), or None."""
     near = p[lo:hi]
     sign = 1.0 if near.max() - bg >= bg - near.min() else -1.0
     s = sign * (p - bg)
@@ -1408,6 +1403,46 @@ def _estimate_line_fwhm(profile: np.ndarray, pos1: float) -> float | None:
     if left is None or right is None:
         return None
     return float(right - left)
+
+
+def _estimate_line_fwhm(profile: np.ndarray, pos1: float) -> float | None:
+    """
+    FWHM in px of the line in a pass-1 profile (ROI averaged along the line), or None.
+
+    The profile is background-subtracted with a local background: the mean of the two
+    bands [inner, inner + LINE_BACKGROUND_BAND_PX] px on either side of ``pos1``, inner =
+    LINE_BACKGROUND_INNER_PX. A wide line reaches into those bands, so while
+    LINE_BACKGROUND_PER_FWHM * FWHM > inner the bands move out to that distance and the
+    FWHM is measured again (at most LINE_BACKGROUND_ITERATIONS times). A global background
+    (e.g. the profile median) is not used: the line often sits on a bright pedestal much
+    wider than the line, and half maximum above the dark surround is the pedestal width.
+    On a curved pedestal the flat band background is a little low, so the estimate is
+    slightly high (~5 % for a line 1/12 of the pedestal width, ~20 % at 1/5).
+
+    Polarity and peak are taken within +/-``LINE_PEAK_SEARCH_PX`` of ``pos1``; the
+    half-maximum crossings on both sides are linearly interpolated. Returns None when a
+    background band runs off the profile, there is no peak, or a crossing is missing.
+    """
+    p = np.asarray(profile, dtype=np.float64)
+    c = int(round(pos1))
+    lo, hi = max(0, c - LINE_PEAK_SEARCH_PX), min(p.size, c + LINE_PEAK_SEARCH_PX + 1)
+    if hi <= lo:
+        return None
+    x = np.arange(p.size, dtype=np.float64)
+    inner = LINE_BACKGROUND_INNER_PX
+    fwhm = None
+    for _ in range(1 + LINE_BACKGROUND_ITERATIONS):
+        outer = inner + LINE_BACKGROUND_BAND_PX
+        if pos1 - outer < 0 or pos1 + outer > p.size - 1:
+            return None
+        minus = p[(x >= pos1 - outer) & (x <= pos1 - inner)]
+        plus = p[(x >= pos1 + inner) & (x <= pos1 + outer)]
+        bg = 0.5 * (float(minus.mean()) + float(plus.mean()))
+        fwhm = _fwhm_over_background(p, lo, hi, bg)
+        if fwhm is None or not LINE_BACKGROUND_PER_FWHM * fwhm > inner:
+            break
+        inner = LINE_BACKGROUND_PER_FWHM * fwhm
+    return fwhm
 
 
 def _adaptive_fine_window(profile: np.ndarray, pos1: float, fine_window: float) -> tuple[float, float | None]:

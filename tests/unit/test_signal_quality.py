@@ -200,6 +200,18 @@ def test_estimate_line_fwhm_on_gaussian(fwhm, polarity):
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("line_fwhm", [8.0, 16.0])
+def test_estimate_line_fwhm_ignores_wide_pedestal(line_fwhm):
+    # Line on a bright pedestal >= 10x wider than the line (as in blob-22): the width at half
+    # maximum above the dark surround would be the pedestal's (~200 px), not the line's.
+    # The flat band background slightly under-reads the curved pedestal, so the estimate
+    # is a little high.
+    profile = _gaussian_profile(200.0) + _gaussian_profile(line_fwhm) - 30.0
+    est = _estimate_line_fwhm(profile, 326.3)
+    assert est == pytest.approx(line_fwhm, rel=0.1)
+
+
+@pytest.mark.unit
 def test_adaptive_window_keeps_fine_window_for_thin_line():
     window, fwhm = _adaptive_fine_window(_gaussian_profile(3.0), 326.3, 40)
     assert window == 40
