@@ -16,6 +16,8 @@ Also reported per ROI, from the deskewed profile over +/-40 px around pass 1:
 - The pass-2 center for fine_window = 10, 20, 40, 80 px (drift => asymmetric profile).
 - Background on each side (mean of the outer 10 px), line FWHM and half-widths, and the
   RSS contrast min/mean (r1) on the configured profile.
+- Next to that FWHM: the pass-1 line-width estimate (``_estimate_line_fwhm``) and the
+  half-width the adaptive fine_window mode would use (``_adaptive_fine_window``).
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ import numpy as np  # noqa: E402
 
 from autocollimator.app import AutocollimatorApp  # noqa: E402
 from autocollimator.target_utils import (  # noqa: E402
+    _adaptive_fine_window,
     _deskew_position,
     _deskew_profile,
     _sdrm_core,
@@ -104,6 +107,7 @@ def main() -> int:
     ap.add_argument("--subpixel-neighbors", type=int, metavar="N")
     ap.add_argument("--oversample-step", type=float, metavar="PX")
     ap.add_argument("--fine-window", type=int, metavar="PX")
+    ap.add_argument("--fine-window-mode", choices=("fixed", "adaptive"))
     ap.add_argument("--refine-search", type=float, metavar="PX")
     ap.add_argument("--max-refine-shift", type=float, metavar="PX")
     args = ap.parse_args()
@@ -117,7 +121,8 @@ def main() -> int:
     overrides: dict = {"profile_mode": "deskew"}
     if args.subpixel:
         overrides["subpixel"] = True
-    for key in ("subpixel_neighbors", "oversample_step", "fine_window", "refine_search", "max_refine_shift"):
+    for key in ("subpixel_neighbors", "oversample_step", "fine_window", "fine_window_mode", "refine_search",
+                "max_refine_shift"):
         if getattr(args, key) is not None:
             overrides[key] = getattr(args, key)
 
@@ -141,6 +146,7 @@ def main() -> int:
         profile_mode="deskew",
         oversample_step=mp.oversample_step,
         fine_window=mp.fine_window,
+        fine_window_mode=mp.fine_window_mode,
         refine_search=mp.refine_search,
         max_refine_shift=mp.max_refine_shift,
     )
@@ -149,7 +155,7 @@ def main() -> int:
     search = int(round(mp.refine_search / step))
     wide = int(round(PLOT_RANGE_PX / step))
     readout = f"subpixel n={mp.subpixel_neighbors}" if mp.subpixel else "integer"
-    print(f"{args.image.name}: deskew / {readout}, oversample_step={step:g}, fine_window={mp.fine_window}, "
+    print(f"{args.image.name}: deskew / {readout}, oversample_step={step:g}, fine_window={mp.fine_window} ({mp.fine_window_mode}), "
           f"refine_search={mp.refine_search:g} px (= +/-{search} samples), "
           f"max_refine_shift={mp.max_refine_shift:g} px, q_limit={q_limit:g}")
     for label, r in (("average", average), ("deskew ", deskew)):
@@ -271,7 +277,10 @@ def report_profiles(args, mp, deskew, step: float) -> None:
             trace.roi, trace.pos1, trace.slope, oversample_step=step, fine_window=mp.fine_window, name=trace.name
         )
         r1 = None if cfg_profile is None else _sdrm_core(cfg_profile, int(round(mp.refine_search / step)))[1]
-        stats_rows.append((trace.name, axis, method, profile_stats(u, profile, chosen), r1, chosen))
+        est_window, est_fwhm = _adaptive_fine_window(trace.roi.mean(axis=0), trace.pos1, mp.fine_window)
+        st = profile_stats(u, profile, chosen)
+        st.update(est_fwhm=est_fwhm, est_window=est_window)
+        stats_rows.append((trace.name, axis, method, st, r1, chosen))
 
     print()
     print("  Center vs. fine_window (image px; * = pass-2 candidate rejected by a guard):")
@@ -289,14 +298,16 @@ def report_profiles(args, mp, deskew, step: float) -> None:
     print(f"  Profile shape (+/-{PROFILE_WINDOW_PX} px; background = mean of {BACKGROUND_BAND_PX[0]:g}-"
           f"{BACKGROUND_BAND_PX[1]:g} px from the chosen center; '-side' = lower x or y coordinate):")
     print(f"  {'ROI':<7}{'axis':<5}{'center':>10}{'bg -side':>10}{'bg +side':>10}{'+ minus -':>11}"
-          f"{'line':>8}{'amp':>8}{'FWHM':>8}{'hw -':>7}{'hw +':>7}{'peak-ctr':>10}{'RSS r1':>9}")
+          f"{'line':>8}{'amp':>8}{'FWHM':>8}{'est':>8}{'adapt':>8}{'hw -':>7}{'hw +':>7}{'peak-ctr':>10}"
+          f"{'RSS r1':>9}")
     for name, axis, method, st, r1, chosen in stats_rows:
         if st is None:
             print(f"  {name:<7}{axis:<5}  no deskewed profile ({method})")
             continue
         print(f"  {name:<7}{axis:<5}{chosen:>10.3f}{st['bg_minus']:>10.2f}{st['bg_plus']:>10.2f}"
               f"{st['bg_plus'] - st['bg_minus']:>+11.2f}{st['polarity']:>8}{st['amplitude']:>8.1f}"
-              f"{fmt(st['fwhm'], 2):>8}{fmt(st['hw_minus'], 2):>7}{fmt(st['hw_plus'], 2):>7}"
+              f"{fmt(st['fwhm'], 2):>8}{fmt(st['est_fwhm'], 2):>8}{st['est_window']:>8.2f}"
+              f"{fmt(st['hw_minus'], 2):>7}{fmt(st['hw_plus'], 2):>7}"
               f"{st['peak_at'] - chosen:>+10.2f}{fmt(r1, 3):>9}")
 
 
