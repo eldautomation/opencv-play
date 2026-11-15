@@ -9,6 +9,13 @@ Usage (from the project root, with .venv active):
 Crop, ROI and q_limit come from the config (--config). The profile mode is always deskew;
 the average-mode result with the same subpixel setting is printed for comparison.
 Plots are written to --out (default outputs/diagnose/).
+
+Also reported per ROI, from the deskewed profile over +/-40 px around pass 1:
+- <stem>_profile_<roi>.png: the profile with pass-1 / pass-2 / chosen centers and its mirror
+  image about the chosen center (asymmetry shows as a gap between the two curves).
+- The pass-2 center for fine_window = 10, 20, 40, 80 px (drift => asymmetric profile).
+- Background on each side (mean of the outer 10 px), line FWHM and half-widths, and the
+  RSS contrast min/mean (r1) on the configured profile.
 """
 
 from __future__ import annotations
@@ -28,6 +35,7 @@ import numpy as np  # noqa: E402
 
 from autocollimator.app import AutocollimatorApp  # noqa: E402
 from autocollimator.target_utils import (  # noqa: E402
+    _deskew_position,
     _deskew_profile,
     _sdrm_core,
     find_cross_center_detailed,
@@ -35,6 +43,47 @@ from autocollimator.target_utils import (  # noqa: E402
 )
 
 PLOT_RANGE_PX = 3.0
+PROFILE_WINDOW_PX = 40
+DRIFT_WINDOWS_PX = (10, 20, 40, 80)
+BACKGROUND_BAND_PX = (30.0, 40.0)  # outer 10 px on each side of the chosen center
+PEAK_SEARCH_PX = 5.0
+
+
+def half_crossing(u: np.ndarray, s: np.ndarray, i_peak: int, half: float, direction: int) -> float | None:
+    """Coordinate where s first drops below ``half`` walking from i_peak in ``direction`` (linear interp)."""
+    i = i_peak
+    while 0 <= i + direction < len(s):
+        j = i + direction
+        if s[j] < half:
+            return float(u[i] + (half - s[i]) * (u[j] - u[i]) / (s[j] - s[i]))
+        i = j
+    return None
+
+
+def profile_stats(u: np.ndarray, profile: np.ndarray, center: float) -> dict:
+    """Background per side, polarity, FWHM and half-widths of a profile around ``center``."""
+    rel = u - center
+    lo, hi = BACKGROUND_BAND_PX
+    bg_minus = float(np.mean(profile[(rel >= -hi) & (rel <= -lo)]))
+    bg_plus = float(np.mean(profile[(rel >= lo) & (rel <= hi)]))
+    bg = 0.5 * (bg_minus + bg_plus)
+    near = np.abs(rel) <= PEAK_SEARCH_PX
+    sign = 1.0 if profile[near].max() - bg >= bg - profile[near].min() else -1.0
+    s = sign * (profile - bg)
+    i_peak = int(np.flatnonzero(near)[np.argmax(s[near])])
+    half = 0.5 * s[i_peak]
+    left = half_crossing(u, s, i_peak, half, -1)
+    right = half_crossing(u, s, i_peak, half, +1)
+    return {
+        "bg_minus": bg_minus,
+        "bg_plus": bg_plus,
+        "polarity": "bright" if sign > 0 else "dark",
+        "amplitude": float(s[i_peak]),
+        "peak_at": float(u[i_peak]),
+        "fwhm": None if left is None or right is None else right - left,
+        "hw_minus": None if left is None else center - left,
+        "hw_plus": None if right is None else right - center,
+    }
 
 
 def axis_origin(trace) -> tuple[str, int]:
@@ -160,7 +209,95 @@ def main() -> int:
 
         print(f"  {trace.name:<7}{axis:<5}{method:<16}{fmt(trace.slope, 5):>9}{fmt(p1):>11}{fmt(p2):>11}"
               f"{fmt(diff):>8}{idx_txt:>10}{flag:>6}{global_txt:>12}  {plot_txt}")
+
+    report_profiles(args, mp, deskew, step)
     return 0
+
+
+def report_profiles(args, mp, deskew, step: float) -> None:
+    """Profile plots, center vs. fine_window, and background/FWHM per ROI."""
+    drift_rows, stats_rows = [], []
+    for trace, method in zip(deskew.rois, deskew.roi_methods):
+        axis, origin = axis_origin(trace)
+        if trace.slope is None:
+            continue
+        profile, _m = _deskew_profile(
+            trace.roi, trace.pos1, trace.slope, oversample_step=step, fine_window=PROFILE_WINDOW_PX, name=trace.name
+        )
+        if profile is None:
+            drift_rows.append((trace.name, axis, origin + trace.pos1, [], None))
+            stats_rows.append((trace.name, axis, method, None, None, None))
+            continue
+
+        half_bins = int(round(PROFILE_WINDOW_PX / step))
+        u = origin + trace.pos1 + (np.arange(profile.size) - half_bins) * step
+        p1 = origin + trace.pos1
+        p2 = None if trace.pos2 is None else origin + trace.pos2
+        chosen = p2 if method == "deskew" else p1
+        mirror = np.interp(2.0 * chosen - u, u, profile, left=np.nan, right=np.nan)
+
+        # 1. Profile plot with mirror image.
+        fig, ax = plt.subplots(figsize=(8, 4.2))
+        ax.plot(u, profile, color="tab:blue", lw=1.2, label="deskewed profile")
+        ax.plot(u, mirror, color="tab:orange", lw=1.0, ls="--", label=f"mirror about {chosen:.3f}")
+        ax.fill_between(u, profile, mirror, where=~np.isnan(mirror), color="tab:red", alpha=0.15,
+                        label="profile - mirror")
+        ax.axvline(p1, color="tab:gray", ls="--", lw=1, label=f"pass 1 ({p1:.3f})")
+        if p2 is not None:
+            ax.axvline(p2, color="tab:red", lw=1.2, ls="-" if method == "deskew" else ":",
+                       label=f"pass 2 ({p2:.3f})" + ("" if method == "deskew" else f", rejected: {method}"))
+        ax.set_xlabel(f"image {axis} (px)" + ("  [+y = down]" if axis == "y" else ""))
+        ax.set_ylabel("intensity")
+        ax.set_title(f"{args.image.stem} {trace.name}: deskewed profile +/-{PROFILE_WINDOW_PX} px, {method}")
+        ax.legend(fontsize=8)
+        fig.tight_layout()
+        plot_path = args.out / f"{args.image.stem}_profile_{trace.name}.png"
+        fig.savefig(plot_path, dpi=120)
+        plt.close(fig)
+
+        # 2. Center vs. fine_window.
+        centers = []
+        for fw in DRIFT_WINDOWS_PX:
+            m, pos = _deskew_position(
+                trace.roi, trace.pos1, trace.slope, oversample_step=step, fine_window=fw,
+                subpixel=mp.subpixel, subpixel_neighbors=mp.subpixel_neighbors, name=trace.name,
+                refine_search=mp.refine_search, max_refine_shift=mp.max_refine_shift,
+            )
+            centers.append((None if pos is None else origin + pos, m))
+        drift_rows.append((trace.name, axis, p1, centers, plot_path))
+
+        # 3. Background, FWHM, RSS contrast.
+        cfg_profile, _m = _deskew_profile(
+            trace.roi, trace.pos1, trace.slope, oversample_step=step, fine_window=mp.fine_window, name=trace.name
+        )
+        r1 = None if cfg_profile is None else _sdrm_core(cfg_profile, int(round(mp.refine_search / step)))[1]
+        stats_rows.append((trace.name, axis, method, profile_stats(u, profile, chosen), r1, chosen))
+
+    print()
+    print("  Center vs. fine_window (image px; * = pass-2 candidate rejected by a guard):")
+    head = "".join(f"{f'fw={fw}':>12}" for fw in DRIFT_WINDOWS_PX)
+    print(f"  {'ROI':<7}{'axis':<5}{'pass1':>10}{head}{'spread':>9}  profile plot")
+    for name, axis, p1, centers, plot_path in drift_rows:
+        cells = "".join(
+            f"{'-':>12}" if c is None else f"{c:>11.3f}{'*' if m != 'deskew' else ' '}" for c, m in centers
+        )
+        vals = [c for c, _m in centers if c is not None]
+        spread = fmt(max(vals) - min(vals)) if vals else "-"
+        print(f"  {name:<7}{axis:<5}{p1:>10.3f}{cells}{spread:>9}  {plot_path or '-'}")
+
+    print()
+    print(f"  Profile shape (+/-{PROFILE_WINDOW_PX} px; background = mean of {BACKGROUND_BAND_PX[0]:g}-"
+          f"{BACKGROUND_BAND_PX[1]:g} px from the chosen center; '-side' = lower x or y coordinate):")
+    print(f"  {'ROI':<7}{'axis':<5}{'center':>10}{'bg -side':>10}{'bg +side':>10}{'+ minus -':>11}"
+          f"{'line':>8}{'amp':>8}{'FWHM':>8}{'hw -':>7}{'hw +':>7}{'peak-ctr':>10}{'RSS r1':>9}")
+    for name, axis, method, st, r1, chosen in stats_rows:
+        if st is None:
+            print(f"  {name:<7}{axis:<5}  no deskewed profile ({method})")
+            continue
+        print(f"  {name:<7}{axis:<5}{chosen:>10.3f}{st['bg_minus']:>10.2f}{st['bg_plus']:>10.2f}"
+              f"{st['bg_plus'] - st['bg_minus']:>+11.2f}{st['polarity']:>8}{st['amplitude']:>8.1f}"
+              f"{fmt(st['fwhm'], 2):>8}{fmt(st['hw_minus'], 2):>7}{fmt(st['hw_plus'], 2):>7}"
+              f"{st['peak_at'] - chosen:>+10.2f}{fmt(r1, 3):>9}")
 
 
 if __name__ == "__main__":
