@@ -248,7 +248,7 @@ def line_intersection(line1: Line, line2: Line) -> Point:
     Returns
     -------
     (x, y) : tuple[float, float]
-        Intersection point rounded to nearest hundredth (2 decimal places).
+        Intersection point (not rounded).
 
     Raises
     ------
@@ -307,10 +307,6 @@ def line_intersection(line1: Line, line2: Line) -> Point:
 
     x_int = x0 + t * dx1
     y_int = y0 + t * dy1
-
-    # Round to nearest hundredth
-    x_int = round(x_int, 2)
-    y_int = round(y_int, 2)
 
     return (x_int, y_int)
 

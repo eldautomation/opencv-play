@@ -30,7 +30,8 @@ def test_blob_22_default_workflow_unchanged(tmp_path: Path) -> None:
     mv = output.measured_values
     # Values measured before the signal-quality phase (gray_mode, saturation, adaptive window).
     assert mv.success is True
-    assert (mv.center_position_x, mv.center_position_y) == (883.72, 566.83)
+    # Center re-measured unrounded when line_intersection stopped rounding (Phase E; was (883.72, 566.83)).
+    assert (mv.center_position_x, mv.center_position_y) == pytest.approx((883.7198956447866, 566.825883389706), abs=0.01)
     assert (mv.measured_angle_a0, mv.measured_angle_a1) == (2.993723861728256, 3.1575496667574487)
     assert (mv.rss_ratio_r0, mv.rss_ratio_r1, mv.rss_ratio_r2, mv.rss_ratio_r3) == (
         0.07555122678593008,

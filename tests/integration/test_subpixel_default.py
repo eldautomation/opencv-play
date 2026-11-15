@@ -37,5 +37,6 @@ def test_blob_22_default_config_center_unchanged(tmp_path: Path) -> None:
         roi_size=(mps.roi_size_x, mps.roi_size_y),
         q_limit=qls.rss_ratio,
     )
-    # Value measured before the sub-pixel option was added.
-    assert position == (883.72, 566.83)
+    # Value measured before the sub-pixel option was added (883.72, 566.83), re-measured unrounded
+    # when line_intersection stopped rounding (Phase E).
+    assert position == pytest.approx((883.7198956447866, 566.825883389706), abs=0.01)

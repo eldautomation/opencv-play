@@ -113,5 +113,6 @@ def test_blob_22_fixed_window_matches_pre_adaptive_result(default_params):
     if img is None:
         pytest.fail("Cannot read image: blob-22.jpg")
     deskew = find_cross_center_detailed(img, subpixel=True, profile_mode="deskew", **default_params)
-    assert deskew.center == pytest.approx((883.73, 566.49), abs=0.005)
+    # Re-measured unrounded when line_intersection stopped rounding (Phase E; was (883.73, 566.49)).
+    assert deskew.center == pytest.approx((883.7314602524013, 566.4864480670376), abs=0.01)
     assert deskew.fine_windows == (40.0,) * 4
