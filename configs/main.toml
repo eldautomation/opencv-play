@@ -23,5 +23,11 @@ image_size_mismatch = "error"
 tilt_unit = "deg"
 rotation_unit = "deg"
 
+# Tilt zero: "image_center" | "calibrated_point" | "measured_zero" (the last two also need
+# tilt_zero_x_px / tilt_zero_y_px). Rotation zero: "image_axes" | "measured_zero" (needs
+# rotation_zero_deg). measured_zero values are written by the app when a zero is set.
+tilt_zero_mode = "image_center"
+rotation_zero_mode = "image_axes"
+
 
 

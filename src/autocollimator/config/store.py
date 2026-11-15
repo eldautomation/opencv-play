@@ -172,6 +172,57 @@ def load_main(config_dir: Path) -> Device:
     return Device.from_dict(d)
 
 
+def update_main_device_fields(config_dir: Path, fields: dict[str, Any]) -> None:
+    """
+    Set (or, with value None, remove) keys of the [device] table in main.toml.
+
+    Edits the raw file line by line, so other keys, comments and the unexpanded
+    ``encryption_key = "${...}"`` reference are kept; the resolved key is never written.
+    The result is parsed and validated before the file is replaced.
+    """
+    path = config_dir / "main.toml"
+    if not path.exists():
+        raise FileNotFoundError(f"Missing config file: {path}")
+    if "encryption_key" in fields:
+        raise ConfigError("device.encryption_key cannot be changed through update_main_device_fields")
+    with path.open("r", encoding="utf-8", newline="") as f:
+        text = f.read()
+    newline = "\r\n" if "\r\n" in text else "\n"
+    lines = text.splitlines(keepends=True)
+
+    table = re.compile(r"^\s*\[")
+    try:
+        start = next(i for i, ln in enumerate(lines) if ln.strip() == "[device]")
+    except StopIteration:
+        raise ConfigError(f"{path} must contain [device] table") from None
+
+    for key, value in fields.items():
+        end = next((i for i in range(start + 1, len(lines)) if table.match(lines[i])), len(lines))
+        key_line = re.compile(rf"^\s*{re.escape(key)}\s*=")
+        idx = next((i for i in range(start + 1, end) if key_line.match(lines[i])), None)
+        if value is None:
+            if idx is not None:
+                del lines[idx]
+            continue
+        rendered = tomli_w.dumps({key: value}).strip() + newline
+        if idx is not None:
+            lines[idx] = rendered
+        else:
+            # Append after the last non-blank line of the [device] table.
+            last = max((i for i in range(start, end) if lines[i].strip()), default=start)
+            if not lines[last].endswith(("\n", "\r")):
+                lines[last] += newline
+            lines.insert(last + 1, rendered)
+
+    new_text = "".join(lines)
+    device = dict(tomllib.loads(new_text).get("device", {}))
+    device["encryption_key"] = device.get("encryption_key") or "unchecked"
+    Device.from_dict(device)  # raises before anything is written if the result is invalid
+
+    with path.open("w", encoding="utf-8", newline="") as f:
+        f.write(new_text)
+
+
 def validate_device_references(device: Device, lib: dict[str, Any]) -> None:
     if device.image_sensor_id not in lib["sensors_by_id"]:
         raise ConfigError(

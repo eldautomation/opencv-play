@@ -179,6 +179,8 @@ class InstrumentModel:
             expected_image_width=capture_mode.output_width,
             expected_image_height=capture_mode.output_height,
             image_size_mismatch=device.image_size_mismatch,
+            tilt_zero=device.tilt_zero,
+            rotation_zero=device.rotation_zero,
         )
 
     @staticmethod
@@ -304,6 +306,13 @@ def resolve_tilt_zero_px(model: InstrumentModel, width: int, height: int) -> tup
     return tz.x_px, tz.y_px
 
 
+def image_rotation_rad(image_measurement: "MeasuredValues", reticle_type: ReticleType) -> float:
+    """Reticle rotation relative to the image axes (no zero applied), for a successful measurement."""
+    if reticle_type is not ReticleType.CROSSHAIR:
+        raise NotImplementedError(f"reticle_type {reticle_type.value!r} is not supported")
+    return crosshair_rotation_rad(image_measurement.measured_angle_a0, image_measurement.measured_angle_a1)
+
+
 def to_angular(
     image_measurement: "MeasuredValues",
     model: InstrumentModel,
@@ -345,7 +354,9 @@ def to_angular(
     tilt_y_rad = 0.5 * math.atan(dy_mm / model.collimator_efl_mm)
 
     a0, a1 = image_measurement.measured_angle_a0, image_measurement.measured_angle_a1
-    rotation_rad = wrap_symmetric(crosshair_rotation_rad(a0, a1) - rotation_zero_rad, QUARTER_TURN_RAD)
+    rotation_rad = wrap_symmetric(
+        image_rotation_rad(image_measurement, model.reticle_type) - rotation_zero_rad, QUARTER_TURN_RAD
+    )
     orthogonality_rad = crosshair_orthogonality_rad(a0, a1)
 
     return AngularMeasurement(

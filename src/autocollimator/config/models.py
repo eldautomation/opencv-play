@@ -5,7 +5,14 @@ import warnings
 from dataclasses import dataclass, field
 from typing import Optional
 
-from autocollimator.instrument import IMAGE_SIZE_MISMATCH_POLICIES, ReticleType
+from autocollimator.instrument import (
+    IMAGE_SIZE_MISMATCH_POLICIES,
+    ReticleType,
+    RotationZeroMode,
+    RotationZeroReference,
+    TiltZeroMode,
+    TiltZeroReference,
+)
 from autocollimator.units import AngleUnit
 
 LOGGER = logging.getLogger(__name__)
@@ -352,12 +359,31 @@ class Device:
     # Default output units (AngleUnit values); overridable per call.
     tilt_unit: str = AngleUnit.DEG.value
     rotation_unit: str = AngleUnit.DEG.value
+    # Tilt zero: "image_center" | "calibrated_point" | "measured_zero"; x/y in pixels, required
+    # unless image_center.
+    tilt_zero_mode: str = TiltZeroMode.IMAGE_CENTER.value
+    tilt_zero_x_px: Optional[float] = None
+    tilt_zero_y_px: Optional[float] = None
+    # Rotation zero: "image_axes" | "measured_zero"; value in degrees relative to the image axes.
+    rotation_zero_mode: str = RotationZeroMode.IMAGE_AXES.value
+    rotation_zero_deg: Optional[float] = None
 
     def __post_init__(self) -> None:
         _require_reticle_type("device.reticle_type", self.reticle_type)
         _require_mismatch_policy("device.image_size_mismatch", self.image_size_mismatch)
         AngleUnit.parse(self.tilt_unit, "device.tilt_unit")
         AngleUnit.parse(self.rotation_unit, "device.rotation_unit")
+        # Validates the modes and that each mode has the values it needs.
+        self.tilt_zero
+        self.rotation_zero
+
+    @property
+    def tilt_zero(self) -> TiltZeroReference:
+        return TiltZeroReference(self.tilt_zero_mode, self.tilt_zero_x_px, self.tilt_zero_y_px)
+
+    @property
+    def rotation_zero(self) -> RotationZeroReference:
+        return RotationZeroReference(self.rotation_zero_mode, self.rotation_zero_deg)
 
     @staticmethod
     def from_dict(d: dict) -> "Device":
@@ -379,6 +405,15 @@ class Device:
             image_size_mismatch=_require_str("device.image_size_mismatch", d.get("image_size_mismatch", "error")),
             tilt_unit=_require_str("device.tilt_unit", d.get("tilt_unit", AngleUnit.DEG.value)),
             rotation_unit=_require_str("device.rotation_unit", d.get("rotation_unit", AngleUnit.DEG.value)),
+            tilt_zero_mode=_require_str(
+                "device.tilt_zero_mode", d.get("tilt_zero_mode", TiltZeroMode.IMAGE_CENTER.value)
+            ),
+            tilt_zero_x_px=_opt_float("device.tilt_zero_x_px", d.get("tilt_zero_x_px")),
+            tilt_zero_y_px=_opt_float("device.tilt_zero_y_px", d.get("tilt_zero_y_px")),
+            rotation_zero_mode=_require_str(
+                "device.rotation_zero_mode", d.get("rotation_zero_mode", RotationZeroMode.IMAGE_AXES.value)
+            ),
+            rotation_zero_deg=_opt_float("device.rotation_zero_deg", d.get("rotation_zero_deg")),
         )
 
 

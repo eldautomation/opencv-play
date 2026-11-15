@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from datetime import datetime
+import math
 import re
 from dataclasses import replace
 
@@ -27,11 +28,19 @@ from autocollimator.config.store import (
     ConfigError,
     load_library,
     load_main,
+    update_main_device_fields,
     validate_device_references,
     save_measurement_output as store_save_measurement_output,
 )
 
-from autocollimator.instrument import InstrumentModel
+from autocollimator.instrument import (
+    InstrumentModel,
+    RotationZeroMode,
+    RotationZeroReference,
+    TiltZeroMode,
+    TiltZeroReference,
+    image_rotation_rad,
+)
 from autocollimator.units import AngleUnit, OutputUnits
 
 from autocollimator.workflow import (
@@ -39,6 +48,11 @@ from autocollimator.workflow import (
 )
 
 LOGGER = logging.getLogger(__name__)
+
+
+class MeasurementFailedError(ValueError):
+    """A failed measurement was used where a successful one is required."""
+
 
 @dataclass(frozen=True)
 class AppContext:
@@ -387,6 +401,56 @@ class AutocollimatorApp:
                 device.rotation_unit if rotation_unit is None else rotation_unit, "rotation_unit"
             ),
         )
+
+
+    def _update_device_fields(self, fields: dict[str, Any]) -> Device:
+        """Persist [device] keys to main.toml and apply them to the in-memory config."""
+        device = replace(self.get_current_config(), **fields)  # validates before writing
+        update_main_device_fields(self.context.config_dir, fields)
+        self.device_config = device
+        return device
+
+
+    @staticmethod
+    def _require_successful(measurement: MeasurementOutput, what: str) -> None:
+        mv = measurement.measured_values
+        if not mv.success:
+            raise MeasurementFailedError(f"Cannot set the {what} from a failed measurement: {mv.message}")
+
+
+    def set_tilt_zero_from_measurement(self, measurement: MeasurementOutput) -> TiltZeroReference:
+        """
+        Use the measured spot position as the tilt zero ("measured_zero") and save it to main.toml.
+
+        The rotation zero is not changed. Raises MeasurementFailedError for a failed measurement.
+        """
+        self._require_successful(measurement, "tilt zero")
+        mv = measurement.measured_values
+        device = self._update_device_fields({
+            "tilt_zero_mode": TiltZeroMode.MEASURED_ZERO.value,
+            "tilt_zero_x_px": mv.center_position_x,
+            "tilt_zero_y_px": mv.center_position_y,
+        })
+        LOGGER.info("Tilt zero set from measurement: (%s, %s) px", mv.center_position_x, mv.center_position_y)
+        return device.tilt_zero
+
+
+    def set_rotation_zero_from_measurement(self, measurement: MeasurementOutput) -> RotationZeroReference:
+        """
+        Use the measured reticle rotation (relative to the image axes) as the rotation zero
+        ("measured_zero") and save it to main.toml, in degrees.
+
+        The tilt zero is not changed. Raises MeasurementFailedError for a failed measurement.
+        """
+        self._require_successful(measurement, "rotation zero")
+        reticle_type = self.get_instrument_model().reticle_type
+        rotation_deg = math.degrees(image_rotation_rad(measurement.measured_values, reticle_type))
+        device = self._update_device_fields({
+            "rotation_zero_mode": RotationZeroMode.MEASURED_ZERO.value,
+            "rotation_zero_deg": rotation_deg,
+        })
+        LOGGER.info("Rotation zero set from measurement: %s deg", rotation_deg)
+        return device.rotation_zero
 
 
     def get_measurement_hardware(self) -> MeasurementHardware:
