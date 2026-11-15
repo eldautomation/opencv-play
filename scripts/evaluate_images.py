@@ -96,6 +96,24 @@ def mode_label(mp) -> str:
     return label
 
 
+def presearch_columns(record) -> dict:
+    """Report columns for the pre-search section of a measurement (R4)."""
+    pr = record.result if record is not None else None
+    cols = {
+        "ps_ran": None if record is None else record.ran,
+        "crop_source": "" if record is None else (record.crop_source or "none"),
+        "ps_success": None, "ps_reason": "", "ps_method": "", "ps_center_x": None, "ps_center_y": None,
+        "ps_size": None, "ps_warnings": "",
+    }
+    if pr is not None:
+        cols.update(
+            ps_success=pr.success, ps_reason=pr.failure_reason or "", ps_method=pr.method_used or "",
+            ps_center_x=pr.recommended_center_x, ps_center_y=pr.recommended_center_y,
+            ps_size=pr.recommended_size, ps_warnings="; ".join(pr.warnings),
+        )
+    return cols
+
+
 def apply_overrides(app: AutocollimatorApp, overrides: dict) -> None:
     """
     Replace the active measurement parameters in memory (config files are not changed).
@@ -183,6 +201,7 @@ def evaluate(
             row["win"] = dict(zip(ROI_NAMES, win))
             row["methods"] = " ".join(f"{name}:{m}" for name, m in zip(ROI_NAMES, methods))
             row["message"] = mv.message
+            row.update(presearch_columns(result.presearch))
 
             overlay_name = f"{path.stem}.jpg"
             cv2.imwrite(str(overlay_dir / overlay_name), overlay, [cv2.IMWRITE_JPEG_QUALITY, 90])
@@ -200,7 +219,9 @@ def write_csv(rows: list[dict], path: Path, units: OutputUnits) -> None:
     fields = ["file", "size", "status", "reported_success", "expected", "match", "x", "y",
               *labels.values(), "a0", "a1", "q_top", "q_bottom", "q_right", "q_left",
               "sat_top", "sat_bottom", "sat_right", "sat_left",
-              "win_top", "win_bottom", "win_right", "win_left", "mode", "methods", "ms", "message", "notes"]
+              "win_top", "win_bottom", "win_right", "win_left", "crop_source", "ps_ran", "ps_success",
+              "ps_method", "ps_center_x", "ps_center_y", "ps_size", "ps_reason", "ps_warnings",
+              "mode", "methods", "ms", "message", "notes"]
     with path.open("w", newline="", encoding="utf-8") as f:
         wr = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         wr.writeheader()
@@ -240,6 +261,18 @@ def write_html(rows: list[dict], path: Path, title: str, q_limit: float, units: 
         cls = "bad" if worst > SATURATION_WARN_FRACTION else ""
         return f'<td class="{cls}" title="{html.escape(tip)}">{fmt(100 * worst)}</td>'
 
+    def presearch_cells(r: dict) -> str:
+        if not r.get("ps_ran"):
+            ps = "not run"
+        else:
+            ps = "ok" if r.get("ps_success") else "FAILED"
+        cls = "bad" if r.get("ps_ran") and not r.get("ps_success") else ""
+        center = (f"{r['ps_center_x']}, {r['ps_center_y']}" if r.get("ps_center_x") is not None else "")
+        details = "; ".join(s for s in (r.get("ps_reason", ""), r.get("ps_warnings", "")) if s)
+        return (f'<td class="{cls}">{ps}</td><td>{html.escape(r.get("ps_method", ""))}</td><td>{center}</td>'
+                f'<td>{r.get("ps_size") or ""}</td><td>{html.escape(str(r.get("crop_source", "")))}</td>'
+                f'<td class="msg">{html.escape(details)}</td>')
+
     body = []
     for r in rows:
         status = r.get("status", "")
@@ -258,7 +291,7 @@ def write_html(rows: list[dict], path: Path, title: str, q_limit: float, units: 
             f"<td><b>{status}</b>{flag}</td><td>{html.escape(str(r.get('expected', '')))}</td>"
             f"<td>{r.get('match', '')}</td><td>{fmt(r.get('x'))}</td><td>{fmt(r.get('y'))}</td>"
             + "".join(f"<td>{fmt(r.get(name), digits[name])}</td>" for name in ANGULAR_FIELDS) +
-            f"<td>{fmt(r.get('a0'), 3)}</td><td>{fmt(r.get('a1'), 3)}</td>{q_cells(r)}{sat_cell(r)}"
+            f"<td>{fmt(r.get('a0'), 3)}</td><td>{fmt(r.get('a1'), 3)}</td>{q_cells(r)}{sat_cell(r)}{presearch_cells(r)}"
             f"<td>{html.escape(r.get('mode', ''))}</td><td class='methods'>{html.escape(r.get('methods', ''))}</td>"
             f"<td>{r.get('ms', '')}</td><td class='msg'>{html.escape(str(r.get('message', '')))}"
             f"<br><i>{html.escape(str(r.get('notes', '')))}</i></td></tr>"
@@ -284,10 +317,12 @@ def write_html(rows: list[dict], path: Path, title: str, q_limit: float, units: 
  &middot; <b>{n_lie}</b> failures reported as success (R1) &middot; quality limit q &gt; {q_limit} shaded red
  &middot; sat = max saturated-pixel % over the ROIs (any channel &gt;= {SATURATION_LEVEL}), shaded above
  {100 * SATURATION_WARN_FRACTION:g} %, hover for per-ROI values.
- Click a thumbnail for the full overlay (blue = crop, yellow = ROIs, green = ROI centers, red = crosshair center).</p>
+ Click a thumbnail for the full overlay (blue = crop, yellow = ROIs, green = ROI centers, red = crosshair center,
+ orange = pre-search recommended region).</p>
 <table><tr><th>Overlay</th><th>File</th><th>Size</th><th>Result</th><th>Expected</th><th>Match</th>
 <th>x</th><th>y</th>{''.join(f'<th>{html.escape(label)}</th>' for label in labels.values())}<th>a0</th><th>a1</th><th>q top</th><th>q bottom</th><th>q right</th><th>q left</th>
-<th>sat max %</th><th>Mode</th><th>ROI methods</th><th>ms</th><th>Message / notes</th></tr>
+<th>sat max %</th><th>Pre-search</th><th>PS method</th><th>PS center</th><th>PS size</th><th>Crop source</th>
+<th>PS reason / warnings</th><th>Mode</th><th>ROI methods</th><th>ms</th><th>Message / notes</th></tr>
 {''.join(body)}
 </table></body></html>"""
     path.write_text(page, encoding="utf-8")

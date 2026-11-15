@@ -3,17 +3,20 @@ from __future__ import annotations
 
 import hashlib
 import math
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import numpy as np
 import pytest
+import yaml
 
 from autocollimator import workflow as workflow_module
 from autocollimator.app import AutocollimatorApp
-from autocollimator.config.models import PresearchParameters
+from autocollimator.config.models import MeasurementOutput, PresearchParameters, PresearchRecord
+from autocollimator.config.store import _yaml_safe_dict, load_measurement_output
 from autocollimator.presearch import recommend_region
 from autocollimator.target_utils import find_cross_center_detailed
+from autocollimator.workflow import PRESEARCH_REGION_COLOR
 
 from synthetic import render_crosshair
 
@@ -197,3 +200,66 @@ def test_on_demand_presearch_writes_nothing(app) -> None:
     assert _tree_digest(CONFIG_DIR) == before
     # Also when the active settings say "off": the on-demand call always runs.
     assert app.get_measurement_parameters().presearch.presearch_mode == "off"
+
+
+# ---- Output: pre-search section of MeasurementOutput / measurement YAML ----
+
+def _region_pixels(overlay: np.ndarray) -> int:
+    return int(np.count_nonzero(np.all(overlay == np.array(PRESEARCH_REGION_COLOR, dtype=np.uint8), axis=2)))
+
+
+@pytest.mark.integration
+def test_record_off_mode(app) -> None:
+    output, overlay = app.run_center_finding_on_image(_image((900.0, 560.0)))
+    mps = app.get_measurement_parameters()
+    assert output.presearch == PresearchRecord(
+        mode="off", ran=False, result=None,
+        crop_center_x=mps.crop_center_x, crop_center_y=mps.crop_center_y,
+        crop_size_x=mps.crop_size_x, crop_size_y=mps.crop_size_y, crop_source="configured",
+    )
+    assert _region_pixels(overlay) == 0
+
+
+@pytest.mark.integration
+def test_record_every_image_round_trips_through_yaml(app) -> None:
+    _set_presearch(app, presearch_mode="every_image")
+    img = _image((300.0, 250.0))
+    output, overlay = app.run_center_finding_on_image(img)
+    record = output.presearch
+    assert record.mode == "every_image" and record.ran and record.result.success
+    assert record.crop_source == "presearch"
+    assert (record.crop_center_x, record.crop_center_y) == (
+        record.result.recommended_center_x, record.result.recommended_center_y
+    )
+    assert record.crop_size_x == record.crop_size_y == record.result.recommended_size
+    assert _region_pixels(overlay) > 4 * record.result.recommended_size  # region drawn
+
+    _input_path, _overlay_path, yaml_path = app.save_measurement_output(output, img.astype(np.uint8), overlay)
+    reloaded = load_measurement_output(yaml_path)
+    assert reloaded.presearch == record
+    assert reloaded.measured_values == output.measured_values
+
+
+@pytest.mark.integration
+def test_record_tracked_and_not_measured(app) -> None:
+    _set_presearch(app, presearch_mode="track")
+    app.run_center_finding_on_image(_image((700.0, 500.0)))
+    output, _ = app.run_center_finding_on_image(_image((710.0, 505.0), seed=5))
+    assert (output.presearch.crop_source, output.presearch.ran, output.presearch.result) == ("tracked", False, None)
+
+    _set_presearch(app, presearch_mode="every_image", min_crop_size_px=5000, presearch_failure_action="fail")
+    output, _ = app.run_center_finding_on_image(_image((700.0, 500.0)))
+    record = output.presearch
+    assert record.ran and not record.result.success and record.crop_source is None
+    assert record.crop_center_x is None and record.crop_size_x is None
+
+
+@pytest.mark.integration
+def test_records_without_presearch_section_still_load(app) -> None:
+    output, _ = app.run_center_finding_on_image(_image((900.0, 560.0)))
+    data = asdict(output, dict_factory=_yaml_safe_dict)
+    del data["presearch"]
+    del data["measurement_parameters"]["presearch"]
+    loaded = MeasurementOutput.from_dict(yaml.safe_load(yaml.safe_dump(data)))
+    assert loaded.presearch is None
+    assert loaded.measurement_parameters.presearch == PresearchParameters()

@@ -20,6 +20,7 @@ from autocollimator.config.models import (
     Recommendations,
     MeasurementHardware,
     MeasurementOutput,
+    PresearchRecord,
     PresearchResult,
 )
 
@@ -28,6 +29,7 @@ from autocollimator.presearch import presearch, recommend_region
 from autocollimator.target_utils import(
     ROI_NAMES,
     CrossCenterResult,
+    draw_box_on_image,
     ensure_bgr_u8,
     ensure_gray_f64,
     find_cross_center_detailed,
@@ -40,6 +42,10 @@ if TYPE_CHECKING:
 
 
 LOGGER = logging.getLogger(__name__)
+
+# Overlay color (BGR) of the pre-search's recommended region: orange, distinct from the debug
+# overlay's blue crop, yellow ROIs, green ROI centers, red center and magenta lines.
+PRESEARCH_REGION_COLOR = (0, 165, 255)
 
 # @dataclass(frozen=True)
 # class CenterFindingResult:
@@ -391,10 +397,20 @@ def run_center_finding_on_image(
         angles,
     )
     if success:
-        presearch_result = choice.presearch_result
         app.set_tracking(
             position,
-            presearch_result.line_fwhm_px if presearch_result is not None else app.tracked_line_fwhm_px,
+            choice.presearch_result.line_fwhm_px if choice.presearch_result is not None else app.tracked_line_fwhm_px,
+        )
+
+    presearch_result = choice.presearch_result
+    if presearch_result is not None and presearch_result.success:
+        # Recommended region, in a color of its own (PRESEARCH_REGION_COLOR).
+        assert presearch_result.recommended_size is not None
+        size = presearch_result.recommended_size
+        x0 = presearch_result.recommended_center_x - size // 2
+        y0 = presearch_result.recommended_center_y - size // 2
+        overlay_image = draw_box_on_image(
+            overlay_image, (x0, y0), (x0 + size - 1, y0 + size - 1), width=2, color=PRESEARCH_REGION_COLOR
         )
 
     overlay_hash = image_md5(overlay_image)
@@ -467,6 +483,16 @@ def run_center_finding_on_image(
         image_hash = image_hash,
         angular_measurement = angular_measurement,
         instrument_model = model,
+        presearch = PresearchRecord(
+            mode = mps.presearch.presearch_mode,
+            ran = choice.presearch_ran,
+            result = choice.presearch_result,
+            crop_center_x = None if choice.crop_center is None else choice.crop_center[0],
+            crop_center_y = None if choice.crop_center is None else choice.crop_center[1],
+            crop_size_x = None if choice.crop_size is None else choice.crop_size[0],
+            crop_size_y = None if choice.crop_size is None else choice.crop_size[1],
+            crop_source = choice.crop_source,
+        ),
     )
 
     return measurement_output, overlay_image

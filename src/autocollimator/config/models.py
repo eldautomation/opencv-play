@@ -704,6 +704,46 @@ class PresearchResult:
 
 
 @dataclass(frozen=True)
+class PresearchRecord:
+    """
+    How the crop of one measurement was chosen: the pre-search mode, whether the pre-search
+    ran and its full result, and the crop actually used (source "configured", "presearch"
+    or "tracked"). The crop and source are None when nothing was measured (pre-search failed
+    with presearch_failure_action "fail").
+    """
+
+    mode: str
+    ran: bool
+    result: Optional[PresearchResult]
+    crop_center_x: Optional[int]
+    crop_center_y: Optional[int]
+    crop_size_x: Optional[int]
+    crop_size_y: Optional[int]
+    crop_source: Optional[str]
+
+    def __post_init__(self) -> None:
+        _require_choice("presearch.mode", self.mode, PRESEARCH_MODES)
+        _require_bool("presearch.ran", self.ran)
+        if self.ran != (self.result is not None):
+            raise ValueError("presearch: result must be set exactly when the pre-search ran")
+        if self.crop_source is not None:
+            _require_choice("presearch.crop_source", self.crop_source, CROP_SOURCES)
+
+    @staticmethod
+    def from_dict(d: dict) -> "PresearchRecord":
+        return PresearchRecord(
+            mode=_require_str("presearch.mode", d["mode"]),
+            ran=_require_bool("presearch.ran", d["ran"]),
+            result=PresearchResult.from_dict(d["result"]) if d.get("result") else None,
+            crop_center_x=_opt_int("presearch.crop_center_x", d.get("crop_center_x")),
+            crop_center_y=_opt_int("presearch.crop_center_y", d.get("crop_center_y")),
+            crop_size_x=_opt_int("presearch.crop_size_x", d.get("crop_size_x")),
+            crop_size_y=_opt_int("presearch.crop_size_y", d.get("crop_size_y")),
+            crop_source=_opt_str("presearch.crop_source", d.get("crop_source")),
+        )
+
+
+@dataclass(frozen=True)
 class MeasuredValues:
     # Position and angles are None only when success is False.
     center_position_x: Optional[float]
@@ -853,7 +893,8 @@ class MeasurementOutput:
     ``instrument_model`` used for the conversion.
 
     Records written before Phase F have no angular measurement or instrument model (None);
-    their ``output_units`` / ``pixel_to_unit_scale_factor`` keys are ignored on load.
+    their ``output_units`` / ``pixel_to_unit_scale_factor`` keys are ignored on load. Records
+    written before Phase G have no ``presearch`` section (None).
     """
 
     hardware: MeasurementHardware
@@ -866,6 +907,7 @@ class MeasurementOutput:
     image_hash: str
     angular_measurement: Optional[AngularMeasurement] = None
     instrument_model: Optional[InstrumentModel] = None
+    presearch: Optional[PresearchRecord] = None
 
     @staticmethod
     def from_dict(d: dict) -> "MeasurementOutput":
@@ -884,6 +926,7 @@ class MeasurementOutput:
             instrument_model=(
                 InstrumentModel.from_dict(d["instrument_model"]) if d.get("instrument_model") else None
             ),
+            presearch=PresearchRecord.from_dict(d["presearch"]) if d.get("presearch") else None,
         )
 
 
